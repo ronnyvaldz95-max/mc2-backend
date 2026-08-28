@@ -1,18 +1,20 @@
 // =============================================================
-// Simula a UN conductor: manda pings de posición por WebSocket, y
-// ahora también recibe y responde ofertas de viaje (trip:offer),
-// aceptando automáticamente después de una demora corta simulando
-// que "el conductor mira el celular y toca aceptar".
+// Simula a UN conductor: se loguea (POST /auth/login) para conseguir
+// un JWT real, manda pings de posición por WebSocket, y recibe y
+// responde ofertas de viaje (trip:offer), aceptando automáticamente
+// después de una demora corta simulando que "el conductor mira el
+// celular y toca aceptar".
 //
 // Uso:
 //   npm run simulate:driver -- "PJC 001"
 //   npm run simulate:driver -- "PJC 001" --reject   (para probar el
 //                                                     fallback al siguiente candidato)
 //
-// Busca el driver_id real por patente (los IDs son UUIDs generados
-// de nuevo cada vez que corrés `npm run seed` en el prototipo).
+// Busca el driver por patente (los datos los crea `npm run seed` en
+// el prototipo, con la contraseña demo compartida "demo1234").
 // Ctrl+C para cortar (manda driver:offline antes de salir).
 // =============================================================
+require('dotenv').config();
 const { Pool } = require('pg');
 const { io } = require('socket.io-client');
 
@@ -20,14 +22,18 @@ const args = process.argv.slice(2);
 const plate = args.find((a) => !a.startsWith('--')) || 'PJC 001';
 const alwaysReject = args.includes('--reject');
 const serverUrl = process.env.MC2_WS_URL || 'http://localhost:3000';
+const DEMO_PASSWORD = process.env.MC2_DEMO_PASSWORD || 'demo1234';
+const useSsl = process.env.PGSSL === 'true';
 
-const pool = new Pool({
-  host: process.env.PGHOST || 'localhost',
-  port: Number(process.env.PGPORT) || 5432,
-  user: process.env.PGUSER || 'mc2',
-  password: process.env.PGPASSWORD || 'mc2dev',
-  database: process.env.PGDATABASE || 'mc2_movilidad',
-});
+const pool = process.env.DATABASE_URL
+  ? new Pool({ connectionString: process.env.DATABASE_URL, ssl: useSsl ? { rejectUnauthorized: false } : undefined })
+  : new Pool({
+      host: process.env.PGHOST || 'localhost',
+      port: Number(process.env.PGPORT) || 5432,
+      user: process.env.PGUSER || 'mc2',
+      password: process.env.PGPASSWORD || 'mc2dev',
+      database: process.env.PGDATABASE || 'mc2_movilidad',
+    });
 
 function jitter(value, magnitude = 0.0006) {
   return value + (Math.random() - 0.5) * magnitude;
@@ -35,7 +41,7 @@ function jitter(value, magnitude = 0.0006) {
 
 async function main() {
   const { rows } = await pool.query(
-    `SELECT dp.user_id, u.full_name,
+    `SELECT dp.user_id, u.full_name, u.phone,
             ST_Y(dp.last_location::geometry) AS lat,
             ST_X(dp.last_location::geometry) AS lon
      FROM driver_profiles dp
@@ -57,13 +63,25 @@ async function main() {
   await pool.end();
 
   console.log(`Simulando a ${driver.full_name} (${plate}, id ${driver.user_id})`);
-  console.log(`Conectando a ${serverUrl} ...`);
+  console.log('Iniciando sesión (POST /auth/login)...');
+
+  const loginRes = await fetch(`${serverUrl}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ phone: driver.phone, password: DEMO_PASSWORD }),
+  });
+  if (!loginRes.ok) {
+    console.error('No pude loguearme:', loginRes.status, await loginRes.text());
+    process.exit(1);
+  }
+  const { access_token: token } = await loginRes.json();
+  console.log('Login OK. Conectando a', serverUrl, '...');
 
   const socket = io(serverUrl, { transports: ['websocket'] });
 
   socket.on('connect', () => {
     console.log('Conectado. Mandando driver:online...');
-    socket.emit('driver:online', { driverId: driver.user_id, lat, lon });
+    socket.emit('driver:online', { token, lat, lon });
   });
 
   let pingTimer;

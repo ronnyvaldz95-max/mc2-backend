@@ -1,7 +1,8 @@
 // =============================================================
 // Simula a la pasajera de prueba (Rosa Melgarejo, la que crea
-// seed.js) pidiendo un viaje: llama a POST /trips, se suscribe al
-// resultado por WebSocket (trip:subscribe) y muestra qué pasa
+// seed.js) pidiendo un viaje: se loguea (POST /auth/login) para
+// conseguir un JWT, llama a POST /trips con ese token, se suscribe
+// al resultado por WebSocket (trip:subscribe) y muestra qué pasa
 // (trip:matched o trip:no_drivers_available).
 //
 // Uso:
@@ -11,21 +12,26 @@
 // mientras "npm run start:dev" y al menos un "npm run simulate:driver"
 // están corriendo.
 // =============================================================
+require('dotenv').config();
 const { Pool } = require('pg');
 const { io } = require('socket.io-client');
 
 const serverUrl = process.env.MC2_WS_URL || 'http://localhost:3000';
+const DEMO_PASSWORD = process.env.MC2_DEMO_PASSWORD || 'demo1234';
+const useSsl = process.env.PGSSL === 'true';
 
-const pool = new Pool({
-  host: process.env.PGHOST || 'localhost',
-  port: Number(process.env.PGPORT) || 5432,
-  user: process.env.PGUSER || 'mc2',
-  password: process.env.PGPASSWORD || 'mc2dev',
-  database: process.env.PGDATABASE || 'mc2_movilidad',
-});
+const pool = process.env.DATABASE_URL
+  ? new Pool({ connectionString: process.env.DATABASE_URL, ssl: useSsl ? { rejectUnauthorized: false } : undefined })
+  : new Pool({
+      host: process.env.PGHOST || 'localhost',
+      port: Number(process.env.PGPORT) || 5432,
+      user: process.env.PGUSER || 'mc2',
+      password: process.env.PGPASSWORD || 'mc2dev',
+      database: process.env.PGDATABASE || 'mc2_movilidad',
+    });
 
 async function main() {
-  const { rows } = await pool.query(`SELECT id, full_name FROM users WHERE role = 'passenger' LIMIT 1`);
+  const { rows } = await pool.query(`SELECT id, full_name, phone FROM users WHERE role = 'passenger' LIMIT 1`);
   if (rows.length === 0) {
     console.error(`No encontré ningún pasajero. ¿Corriste "npm run seed" en el prototipo?`);
     await pool.end();
@@ -35,6 +41,19 @@ async function main() {
   await pool.end();
 
   console.log(`Simulando a ${passenger.full_name} (id ${passenger.id})`);
+  console.log('Iniciando sesión (POST /auth/login)...');
+
+  const loginRes = await fetch(`${serverUrl}/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ phone: passenger.phone, password: DEMO_PASSWORD }),
+  });
+  if (!loginRes.ok) {
+    console.error('No pude loguearme:', loginRes.status, await loginRes.text());
+    process.exit(1);
+  }
+  const { access_token: token } = await loginRes.json();
+  console.log('Login OK.');
 
   // Punto de recogida: el mismo centro de Pedro Juan Caballero que usa match.js.
   const pickup = { lat: -22.548, lon: -55.7335 };
@@ -48,8 +67,8 @@ async function main() {
 
     const res = await fetch(`${serverUrl}/trips`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ passengerId: passenger.id, pickup, dropoff }),
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ pickup, dropoff }),
     });
 
     if (!res.ok) {

@@ -1,6 +1,8 @@
 // =============================================================
 // Gateway WebSocket para el ciclo de vida de un conductor:
 //   1. driver:online  -> el conductor se conecta y pasa a disponible
+//      (requiere un JWT válido de un usuario con role 'driver';
+//      el driverId sale del token, nunca de lo que mande el cliente)
 //   2. driver:ping    -> ping de posición cada 3-5s mientras maneja
 //   3. driver:offline / desconexión -> deja de estar disponible
 //
@@ -9,6 +11,7 @@
 // escucha trip:respond con la decisión del conductor.
 // =============================================================
 import { Logger } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
 import {
   ConnectedSocket,
   MessageBody,
@@ -18,10 +21,11 @@ import {
   WebSocketGateway,
 } from '@nestjs/websockets';
 import { Socket } from 'socket.io';
+import { AuthUser } from '../auth/jwt-auth.guard';
 import { DriversService } from './drivers.service';
 
 interface DriverOnlinePayload {
-  driverId: string;
+  token: string;
   lat: number;
   lon: number;
 }
@@ -53,7 +57,10 @@ export class DriversGateway implements OnGatewayConnection, OnGatewayDisconnect 
   // tripId -> oferta pendiente de respuesta de ese conductor puntual.
   private readonly pendingTripOffers = new Map<string, { driverId: string; resolve: (accepted: boolean) => void }>();
 
-  constructor(private readonly driversService: DriversService) {}
+  constructor(
+    private readonly driversService: DriversService,
+    private readonly jwtService: JwtService,
+  ) {}
 
   handleConnection(client: Socket) {
     this.logger.log(`Socket conectado: ${client.id}`);
@@ -71,18 +78,29 @@ export class DriversGateway implements OnGatewayConnection, OnGatewayDisconnect 
   }
 
   @SubscribeMessage('driver:online')
-  async onDriverOnline(
-    @MessageBody() payload: DriverOnlinePayload,
-    @ConnectedSocket() client: Socket,
-  ) {
-    if (!payload?.driverId || typeof payload.lat !== 'number' || typeof payload.lon !== 'number') {
-      client.emit('driver:error', { message: 'driverId, lat y lon son requeridos' });
+  async onDriverOnline(@MessageBody() payload: DriverOnlinePayload, @ConnectedSocket() client: Socket) {
+    if (!payload?.token || typeof payload.lat !== 'number' || typeof payload.lon !== 'number') {
+      client.emit('driver:error', { message: 'token, lat y lon son requeridos' });
       return;
     }
-    client.data.driverId = payload.driverId;
-    this.driverSockets.set(payload.driverId, client);
-    await this.driversService.setDriverOnline(payload.driverId, payload.lat, payload.lon);
-    client.emit('driver:online:ack', { ok: true });
+
+    let decoded: AuthUser;
+    try {
+      decoded = this.jwtService.verify<AuthUser>(payload.token);
+    } catch {
+      client.emit('driver:error', { message: 'Token inválido o expirado' });
+      return;
+    }
+    if (decoded.role !== 'driver') {
+      client.emit('driver:error', { message: 'Este token no pertenece a un conductor' });
+      return;
+    }
+
+    const driverId = decoded.sub;
+    client.data.driverId = driverId;
+    this.driverSockets.set(driverId, client);
+    await this.driversService.setDriverOnline(driverId, payload.lat, payload.lon);
+    client.emit('driver:online:ack', { ok: true, driverId });
   }
 
   @SubscribeMessage('driver:ping')
