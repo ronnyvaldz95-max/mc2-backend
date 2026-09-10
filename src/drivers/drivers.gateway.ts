@@ -168,4 +168,11 @@ export class DriversGateway implements OnGatewayConnection, OnGatewayDisconnect 
       socket.emit('trip:offer', offer);
     });
   }
+
+  // Manda un evento directo al socket ya abierto de un conductor
+  // puntual (por ejemplo, avisarle que el pasajero canceló el viaje).
+  // No hace nada si el conductor no está conectado en este momento.
+  notifyDriver(driverId: string, event: string, payload: unknown): void {
+    this.driverSockets.get(driverId)?.emit(event, payload);
+  }
 }

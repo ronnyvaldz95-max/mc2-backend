@@ -11,7 +11,7 @@
 // destino", viaja como null de punta a punta y se lo mostramos así al
 // conductor, que lo coordina de palabra con el pasajero al recogerlo.
 // =============================================================
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { pool } from '../db';
 import { DriversService } from '../drivers/drivers.service';
 import { DriversGateway } from '../drivers/drivers.gateway';
@@ -161,5 +161,62 @@ export class TripsService {
       [passengerId, limit],
     );
     return rows;
+  }
+
+  // El conductor asignado marca que arrancó el viaje (recogió al
+  // pasajero). Solo válido desde 'accepted'.
+  async startTrip(tripId: string, driverId: string): Promise<void> {
+    const { rows } = await pool.query(`SELECT status, driver_id FROM trips WHERE id = $1`, [tripId]);
+    const trip = rows[0];
+    if (!trip) throw new NotFoundException('Viaje no encontrado');
+    if (trip.driver_id !== driverId) throw new ForbiddenException('Este viaje no te fue asignado');
+    if (trip.status !== 'accepted') {
+      throw new BadRequestException(`No se puede iniciar un viaje en estado '${trip.status}'`);
+    }
+    await pool.query(`UPDATE trips SET status = 'in_progress', started_at = now() WHERE id = $1`, [tripId]);
+    this.tripsGateway.notifyTrip(tripId, 'trip:started', { trip_id: tripId });
+    this.logger.log(`Viaje ${tripId}: iniciado por conductor ${driverId}`);
+  }
+
+  // El conductor asignado marca que terminó el viaje (dejó al
+  // pasajero). Solo válido desde 'in_progress'.
+  async completeTrip(tripId: string, driverId: string): Promise<void> {
+    const { rows } = await pool.query(`SELECT status, driver_id FROM trips WHERE id = $1`, [tripId]);
+    const trip = rows[0];
+    if (!trip) throw new NotFoundException('Viaje no encontrado');
+    if (trip.driver_id !== driverId) throw new ForbiddenException('Este viaje no te fue asignado');
+    if (trip.status !== 'in_progress') {
+      throw new BadRequestException(`No se puede finalizar un viaje en estado '${trip.status}'`);
+    }
+    await pool.query(`UPDATE trips SET status = 'completed', completed_at = now() WHERE id = $1`, [tripId]);
+    this.tripsGateway.notifyTrip(tripId, 'trip:completed', { trip_id: tripId });
+    this.logger.log(`Viaje ${tripId}: completado por conductor ${driverId}`);
+  }
+
+  // El pasajero dueño, o el conductor asignado, cancelan el viaje.
+  // Solo antes de que esté en curso o completado -- una vez
+  // 'in_progress' ya no se puede cancelar (conviene completarlo).
+  async cancelTrip(tripId: string, requesterId: string, requesterRole: string): Promise<void> {
+    const { rows } = await pool.query(`SELECT status, driver_id, passenger_id FROM trips WHERE id = $1`, [tripId]);
+    const trip = rows[0];
+    if (!trip) throw new NotFoundException('Viaje no encontrado');
+
+    const isPassenger = requesterRole === 'passenger' && trip.passenger_id === requesterId;
+    const isDriver = requesterRole === 'driver' && trip.driver_id === requesterId;
+    if (!isPassenger && !isDriver) throw new ForbiddenException('No podés cancelar este viaje');
+
+    if (!['requested', 'matched', 'accepted'].includes(trip.status)) {
+      throw new BadRequestException(`No se puede cancelar un viaje en estado '${trip.status}'`);
+    }
+
+    const newStatus = isDriver ? 'cancelled_by_driver' : 'cancelled_by_passenger';
+    await pool.query(`UPDATE trips SET status = $2, cancelled_at = now() WHERE id = $1`, [tripId, newStatus]);
+
+    const cancelledBy = isDriver ? 'driver' : 'passenger';
+    this.tripsGateway.notifyTrip(tripId, 'trip:cancelled', { trip_id: tripId, cancelled_by: cancelledBy });
+    if (isPassenger && trip.driver_id) {
+      this.driversGateway.notifyDriver(trip.driver_id, 'trip:cancelled', { trip_id: tripId, cancelled_by: cancelledBy });
+    }
+    this.logger.log(`Viaje ${tripId}: cancelado por ${isDriver ? 'conductor' : 'pasajero'}`);
   }
 }

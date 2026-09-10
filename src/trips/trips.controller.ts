@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
 import { TripsService } from './trips.service';
 import { AuthUser, JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -76,5 +76,36 @@ export class TripsController {
     const user = (req as Request & { user: AuthUser }).user;
     const trips = await this.tripsService.getMyTrips(user.sub);
     return { trips };
+  }
+
+  // POST /trips/:id/start  (requiere token del CONDUCTOR asignado)
+  // El conductor marca que arrancó el viaje (recogió al pasajero).
+  @Post(':id/start')
+  @UseGuards(JwtAuthGuard)
+  async start(@Param('id') id: string, @Req() req: Request) {
+    const user = (req as Request & { user: AuthUser }).user;
+    await this.tripsService.startTrip(id, user.sub);
+    return { ok: true };
+  }
+
+  // POST /trips/:id/complete  (requiere token del CONDUCTOR asignado)
+  // El conductor marca que terminó el viaje (dejó al pasajero).
+  @Post(':id/complete')
+  @UseGuards(JwtAuthGuard)
+  async complete(@Param('id') id: string, @Req() req: Request) {
+    const user = (req as Request & { user: AuthUser }).user;
+    await this.tripsService.completeTrip(id, user.sub);
+    return { ok: true };
+  }
+
+  // POST /trips/:id/cancel  (requiere token del PASAJERO dueño o del
+  // CONDUCTOR asignado). Solo se puede cancelar antes de que el viaje
+  // esté en curso (in_progress) o ya completado.
+  @Post(':id/cancel')
+  @UseGuards(JwtAuthGuard)
+  async cancel(@Param('id') id: string, @Req() req: Request) {
+    const user = (req as Request & { user: AuthUser }).user;
+    await this.tripsService.cancelTrip(id, user.sub, user.role);
+    return { ok: true };
   }
 }
