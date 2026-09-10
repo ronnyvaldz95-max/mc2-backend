@@ -30,6 +30,11 @@ function isValidPaymentMethod(v: unknown): v is PaymentMethod {
   return typeof v === 'string' && (PAYMENT_METHODS as readonly string[]).includes(v);
 }
 
+interface RateTripDto {
+  score: number;
+  comment?: string;
+}
+
 // POST /trips  (requiere "Authorization: Bearer <token>" de un pasajero)
 // Body: { pickup: {lat, lon}, dropoff?: {lat, lon} | null, paymentMethod?: 'efectivo'|'transferencia'|'pix' }
 //
@@ -106,6 +111,22 @@ export class TripsController {
   async cancel(@Param('id') id: string, @Req() req: Request) {
     const user = (req as Request & { user: AuthUser }).user;
     await this.tripsService.cancelTrip(id, user.sub, user.role);
+    return { ok: true };
+  }
+
+  // POST /trips/:id/rate  (requiere token del pasajero o del conductor
+  // del viaje). Solo se puede calificar un viaje ya 'completed'. Si se
+  // llama dos veces, la segunda actualiza la calificación anterior en
+  // vez de duplicarla.
+  @Post(':id/rate')
+  @UseGuards(JwtAuthGuard)
+  async rate(@Param('id') id: string, @Body() body: RateTripDto, @Req() req: Request) {
+    if (typeof body?.score !== 'number' || !Number.isInteger(body.score) || body.score < 1 || body.score > 5) {
+      throw new BadRequestException('score tiene que ser un entero entre 1 y 5');
+    }
+    const comment = typeof body?.comment === 'string' && body.comment.trim() ? body.comment.trim() : null;
+    const user = (req as Request & { user: AuthUser }).user;
+    await this.tripsService.rateTrip(id, user.sub, user.role, body.score, comment);
     return { ok: true };
   }
 }

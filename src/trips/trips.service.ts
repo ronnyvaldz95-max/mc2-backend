@@ -150,7 +150,10 @@ export class TripsService {
          CASE WHEN t.dropoff_location IS NULL THEN NULL ELSE ST_Y(t.dropoff_location::geometry) END AS dropoff_lat,
          CASE WHEN t.dropoff_location IS NULL THEN NULL ELSE ST_X(t.dropoff_location::geometry) END AS dropoff_lon,
          d.full_name AS driver_name,
-         v.plate AS driver_plate
+         v.plate AS driver_plate,
+         EXISTS (
+           SELECT 1 FROM ratings r WHERE r.trip_id = t.id AND r.rated_by = $1
+         ) AS rated_by_me
        FROM trips t
        LEFT JOIN users d ON d.id = t.driver_id
        LEFT JOIN driver_profiles dp ON dp.user_id = t.driver_id
@@ -218,5 +221,59 @@ export class TripsService {
       this.driversGateway.notifyDriver(trip.driver_id, 'trip:cancelled', { trip_id: tripId, cancelled_by: cancelledBy });
     }
     this.logger.log(`Viaje ${tripId}: cancelado por ${isDriver ? 'conductor' : 'pasajero'}`);
+  }
+
+  // El pasajero califica al conductor, o el conductor al pasajero, de
+  // un viaje ya 'completed'. Llamar de nuevo actualiza la calificación
+  // anterior (no se duplica, hay UNIQUE (trip_id, rated_by)). Después
+  // de guardarla, recalculamos el promedio del calificado desde la
+  // tabla ratings (fuente de verdad), no acumulando a mano.
+  async rateTrip(
+    tripId: string,
+    raterId: string,
+    raterRole: string,
+    score: number,
+    comment: string | null,
+  ): Promise<void> {
+    const { rows } = await pool.query(
+      `SELECT status, driver_id, passenger_id FROM trips WHERE id = $1`,
+      [tripId],
+    );
+    const trip = rows[0];
+    if (!trip) throw new NotFoundException('Viaje no encontrado');
+    if (trip.status !== 'completed') {
+      throw new BadRequestException('Solo se puede calificar un viaje completado');
+    }
+
+    const isPassenger = raterRole === 'passenger' && trip.passenger_id === raterId;
+    const isDriver = raterRole === 'driver' && trip.driver_id === raterId;
+    if (!isPassenger && !isDriver) throw new ForbiddenException('No podés calificar este viaje');
+
+    const ratedUser = isPassenger ? trip.driver_id : trip.passenger_id;
+    if (!ratedUser) throw new BadRequestException('Este viaje no tiene a quién calificar');
+
+    await pool.query(
+      `INSERT INTO ratings (trip_id, rated_by, rated_user, score, comment)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (trip_id, rated_by)
+       DO UPDATE SET score = EXCLUDED.score, comment = EXCLUDED.comment`,
+      [tripId, raterId, ratedUser, score, comment],
+    );
+
+    await pool.query(
+      `UPDATE users u
+       SET rating = sub.avg_score, rating_count = sub.cnt
+       FROM (
+         SELECT rated_user, ROUND(AVG(score)::numeric, 1) AS avg_score, COUNT(*) AS cnt
+         FROM ratings WHERE rated_user = $1
+         GROUP BY rated_user
+       ) sub
+       WHERE u.id = sub.rated_user`,
+      [ratedUser],
+    );
+
+    this.logger.log(
+      `Viaje ${tripId}: calificado por ${isPassenger ? 'pasajero' : 'conductor'} con ${score}/5`,
+    );
   }
 }
