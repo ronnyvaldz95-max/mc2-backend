@@ -20,6 +20,8 @@ export interface NearbyDriver {
   plate: string | null;
   distance_m: number;
   eta_min: number;
+  lat: number;
+  lon: number;
 }
 
 function estimateEtaMinutes(distanceMeters: number): number {
@@ -93,6 +95,8 @@ export class DriversService {
           plate: r.plate,
           distance_m: Math.round(geo.distance_m),
           eta_min: estimateEtaMinutes(geo.distance_m),
+          lat: geo.lat,
+          lon: geo.lon,
         };
       })
       .sort((a, b) => a.distance_m - b.distance_m)
