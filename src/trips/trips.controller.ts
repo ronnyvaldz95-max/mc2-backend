@@ -10,7 +10,10 @@ interface LatLonDto {
 
 interface CreateTripDto {
   pickup: LatLonDto;
-  dropoff: LatLonDto;
+  // Puede venir null/ausente cuando el pasajero eligió "No informar
+  // destino" (por ejemplo, no sabe la dirección exacta todavía) -- el
+  // conductor y el pasajero lo coordinan de palabra al encontrarse.
+  dropoff?: LatLonDto | null;
 }
 
 function isValidLatLon(v: unknown): v is LatLonDto {
@@ -18,7 +21,7 @@ function isValidLatLon(v: unknown): v is LatLonDto {
 }
 
 // POST /trips  (requiere "Authorization: Bearer <token>" de un pasajero)
-// Body: { pickup: {lat, lon}, dropoff: {lat, lon} }
+// Body: { pickup: {lat, lon}, dropoff?: {lat, lon} | null }
 //
 // El passengerId ya NO se manda en el body -- se toma del token, para
 // que nadie pueda pedir un viaje "a nombre de" otro pasajero.
@@ -32,8 +35,11 @@ export class TripsController {
   @Post()
   @UseGuards(JwtAuthGuard)
   async create(@Body() body: CreateTripDto, @Req() req: Request) {
-    if (!isValidLatLon(body?.pickup) || !isValidLatLon(body?.dropoff)) {
-      throw new BadRequestException('pickup {lat,lon} y dropoff {lat,lon} son requeridos');
+    if (!isValidLatLon(body?.pickup)) {
+      throw new BadRequestException('pickup {lat,lon} es requerido');
+    }
+    if (body.dropoff != null && !isValidLatLon(body.dropoff)) {
+      throw new BadRequestException('dropoff, si se manda, tiene que ser {lat,lon}');
     }
 
     const user = (req as Request & { user: AuthUser }).user;
@@ -41,7 +47,7 @@ export class TripsController {
     const { tripId } = await this.tripsService.createTrip({
       passengerId: user.sub,
       pickup: body.pickup,
-      dropoff: body.dropoff,
+      dropoff: body.dropoff ?? null,
     });
 
     return { trip_id: tripId, status: 'requested' };

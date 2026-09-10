@@ -6,6 +6,10 @@
 //      con timeout); si rechaza o no responde, pasa al siguiente.
 //   4. Si alguno acepta -> status: accepted + avisa al pasajero.
 //      Si se acaban los candidatos -> status: no_drivers_available.
+//
+// El destino (dropoff) es opcional: si el pasajero eligió "No informar
+// destino", viaja como null de punta a punta y se lo mostramos así al
+// conductor, que lo coordina de palabra con el pasajero al recogerlo.
 // =============================================================
 import { Injectable, Logger } from '@nestjs/common';
 import { pool } from '../db';
@@ -23,7 +27,7 @@ export interface LatLon {
 export interface CreateTripInput {
   passengerId: string;
   pickup: LatLon;
-  dropoff: LatLon;
+  dropoff: LatLon | null;
 }
 
 @Injectable()
@@ -41,13 +45,23 @@ export class TripsService {
       `INSERT INTO trips (passenger_id, pickup_location, dropoff_location, status)
        VALUES ($1,
          ST_SetSRID(ST_MakePoint($2, $3), 4326)::geography,
-         ST_SetSRID(ST_MakePoint($4, $5), 4326)::geography,
+         CASE WHEN $4::double precision IS NULL THEN NULL
+              ELSE ST_SetSRID(ST_MakePoint($4, $5), 4326)::geography END,
          'requested')
        RETURNING id`,
-      [input.passengerId, input.pickup.lon, input.pickup.lat, input.dropoff.lon, input.dropoff.lat],
+      [
+        input.passengerId,
+        input.pickup.lon,
+        input.pickup.lat,
+        input.dropoff?.lon ?? null,
+        input.dropoff?.lat ?? null,
+      ],
     );
     const tripId = rows[0].id;
-    this.logger.log(`Viaje ${tripId} solicitado por pasajero ${input.passengerId}`);
+    this.logger.log(
+      `Viaje ${tripId} solicitado por pasajero ${input.passengerId}` +
+        (input.dropoff ? '' : ' (sin destino informado)'),
+    );
 
     // No lo esperamos: el pasajero ya tiene su trip_id para hacer
     // trip:subscribe. El resultado del matching le llega por WebSocket
@@ -57,7 +71,7 @@ export class TripsService {
     return { tripId };
   }
 
-  private async matchTrip(tripId: string, pickup: LatLon, dropoff: LatLon): Promise<void> {
+  private async matchTrip(tripId: string, pickup: LatLon, dropoff: LatLon | null): Promise<void> {
     const candidates = await this.driversService.findNearbyDrivers(pickup.lat, pickup.lon, 3000, 5);
 
     if (candidates.length === 0) {

@@ -38,7 +38,8 @@ interface DriverPingPayload {
 export interface TripOfferPayload {
   tripId: string;
   pickup: { lat: number; lon: number };
-  dropoff: { lat: number; lon: number };
+  // null cuando el pasajero eligió "No informar destino".
+  dropoff: { lat: number; lon: number } | null;
 }
 
 interface TripRespondPayload {
