@@ -205,7 +205,7 @@ export class TripsService {
     const isDriver = requesterRole === 'driver' && trip.driver_id === requesterId;
     if (!isPassenger && !isDriver) throw new ForbiddenException('No podés cancelar este viaje');
 
-    if (!['requested', 'matched', 'accepted'].includes(trip.status)) {
+    if (!['requested', 'matched', 'accepted', 'no_drivers_available'].includes(trip.status)) {
       throw new BadRequestException(`No se puede cancelar un viaje en estado '${trip.status}'`);
     }
 
