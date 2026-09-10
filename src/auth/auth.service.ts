@@ -137,13 +137,15 @@ export class AuthService {
 
   async login(phone: string, password: string) {
     if (!phone || !password) throw new BadRequestException('phone y password son requeridos');
-    const { rows } = await pool.query(`SELECT id, full_name, role, password_hash FROM users WHERE phone = $1`, [
-      phone,
-    ]);
+    const { rows } = await pool.query(
+      `SELECT id, full_name, role, password_hash, is_active FROM users WHERE phone = $1`,
+      [phone],
+    );
     const user = rows[0];
     if (!user) throw new UnauthorizedException('Teléfono o contraseña incorrectos');
     const valid = await bcrypt.compare(password, user.password_hash);
     if (!valid) throw new UnauthorizedException('Teléfono o contraseña incorrectos');
+    if (!user.is_active) throw new UnauthorizedException('Esta cuenta fue eliminada');
     return this.authResponse(user);
   }
 }

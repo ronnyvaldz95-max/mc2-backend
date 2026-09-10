@@ -123,4 +123,33 @@ export class TripsService {
     this.tripsGateway.notifyTrip(tripId, 'trip:no_drivers_available', { trip_id: tripId });
     this.logger.log(`Viaje ${tripId}: no_drivers_available`);
   }
+
+  // Historial de viajes de un pasajero, para la pantalla "Actividad".
+  // dropoff_lat/lon vienen null si el viaje se pidió sin informar
+  // destino. driver_name/driver_plate vienen null si nunca se asignó
+  // un conductor (por ejemplo, no_drivers_available).
+  async getMyTrips(passengerId: string, limit = 30) {
+    const { rows } = await pool.query(
+      `SELECT
+         t.id,
+         t.status,
+         t.requested_at,
+         t.matched_at,
+         ST_Y(t.pickup_location::geometry) AS pickup_lat,
+         ST_X(t.pickup_location::geometry) AS pickup_lon,
+         CASE WHEN t.dropoff_location IS NULL THEN NULL ELSE ST_Y(t.dropoff_location::geometry) END AS dropoff_lat,
+         CASE WHEN t.dropoff_location IS NULL THEN NULL ELSE ST_X(t.dropoff_location::geometry) END AS dropoff_lon,
+         d.full_name AS driver_name,
+         v.plate AS driver_plate
+       FROM trips t
+       LEFT JOIN users d ON d.id = t.driver_id
+       LEFT JOIN driver_profiles dp ON dp.user_id = t.driver_id
+       LEFT JOIN vehicles v ON v.id = dp.active_vehicle_id
+       WHERE t.passenger_id = $1
+       ORDER BY t.requested_at DESC
+       LIMIT $2`,
+      [passengerId, limit],
+    );
+    return rows;
+  }
 }

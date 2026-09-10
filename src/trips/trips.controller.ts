@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Post, Req, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
 import { TripsService } from './trips.service';
 import { AuthUser, JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -51,5 +51,16 @@ export class TripsController {
     });
 
     return { trip_id: tripId, status: 'requested' };
+  }
+
+  // GET /trips/mine  (requiere token de pasajero)
+  // Devuelve los últimos viajes del pasajero logueado, más recientes
+  // primero -- lo que muestra la pantalla "Actividad" de la app.
+  @Get('mine')
+  @UseGuards(JwtAuthGuard)
+  async mine(@Req() req: Request) {
+    const user = (req as Request & { user: AuthUser }).user;
+    const trips = await this.tripsService.getMyTrips(user.sub);
+    return { trips };
   }
 }
