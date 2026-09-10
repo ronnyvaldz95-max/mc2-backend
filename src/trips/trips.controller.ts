@@ -8,20 +8,30 @@ interface LatLonDto {
   lon: number;
 }
 
+const PAYMENT_METHODS = ['efectivo', 'transferencia', 'pix'] as const;
+type PaymentMethod = (typeof PAYMENT_METHODS)[number];
+
 interface CreateTripDto {
   pickup: LatLonDto;
   // Puede venir null/ausente cuando el pasajero eligió "No informar
   // destino" (por ejemplo, no sabe la dirección exacta todavía) -- el
   // conductor y el pasajero lo coordinan de palabra al encontrarse.
   dropoff?: LatLonDto | null;
+  // Si no se manda, queda 'efectivo' (el default de la columna en la
+  // base de datos y también el de la app).
+  paymentMethod?: PaymentMethod;
 }
 
 function isValidLatLon(v: unknown): v is LatLonDto {
   return !!v && typeof (v as LatLonDto).lat === 'number' && typeof (v as LatLonDto).lon === 'number';
 }
 
+function isValidPaymentMethod(v: unknown): v is PaymentMethod {
+  return typeof v === 'string' && (PAYMENT_METHODS as readonly string[]).includes(v);
+}
+
 // POST /trips  (requiere "Authorization: Bearer <token>" de un pasajero)
-// Body: { pickup: {lat, lon}, dropoff?: {lat, lon} | null }
+// Body: { pickup: {lat, lon}, dropoff?: {lat, lon} | null, paymentMethod?: 'efectivo'|'transferencia'|'pix' }
 //
 // El passengerId ya NO se manda en el body -- se toma del token, para
 // que nadie pueda pedir un viaje "a nombre de" otro pasajero.
@@ -41,6 +51,9 @@ export class TripsController {
     if (body.dropoff != null && !isValidLatLon(body.dropoff)) {
       throw new BadRequestException('dropoff, si se manda, tiene que ser {lat,lon}');
     }
+    if (body.paymentMethod != null && !isValidPaymentMethod(body.paymentMethod)) {
+      throw new BadRequestException(`paymentMethod, si se manda, tiene que ser uno de: ${PAYMENT_METHODS.join(', ')}`);
+    }
 
     const user = (req as Request & { user: AuthUser }).user;
 
@@ -48,6 +61,7 @@ export class TripsController {
       passengerId: user.sub,
       pickup: body.pickup,
       dropoff: body.dropoff ?? null,
+      paymentMethod: body.paymentMethod ?? 'efectivo',
     });
 
     return { trip_id: tripId, status: 'requested' };

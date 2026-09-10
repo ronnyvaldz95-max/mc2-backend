@@ -40,6 +40,8 @@ export interface TripOfferPayload {
   pickup: { lat: number; lon: number };
   // null cuando el pasajero eligió "No informar destino".
   dropoff: { lat: number; lon: number } | null;
+  // 'efectivo' | 'transferencia' | 'pix'
+  paymentMethod: string;
 }
 
 interface TripRespondPayload {
