@@ -276,4 +276,74 @@ export class TripsService {
       `Viaje ${tripId}: calificado por ${isPassenger ? 'pasajero' : 'conductor'} con ${score}/5`,
     );
   }
+
+  // --- Chat pasajero <-> conductor de un viaje -------------------------
+  //
+  // El ENVÍO va por REST (POST /trips/:id/messages, ver trips.controller)
+  // -- así reusamos el JwtAuthGuard que ya existe y no hace falta
+  // autenticar sockets nuevos. La RECEPCIÓN en vivo del otro lado sigue
+  // yendo por los canales de WebSocket que YA existían: tripsGateway
+  // (sala trip:<id>, donde el pasajero ya está por trip:subscribe) y
+  // driversGateway (socket directo del conductor). No se tocó ningún
+  // gateway para esto.
+
+  async sendChatMessage(
+    tripId: string,
+    senderId: string,
+    senderRole: string,
+    text: string,
+  ): Promise<{
+    id: string;
+    trip_id: string;
+    sender_id: string;
+    sender_role: string;
+    text: string;
+    created_at: string;
+  }> {
+    const trimmed = text?.trim() ?? '';
+    if (!trimmed) throw new BadRequestException('El mensaje no puede estar vacío');
+    if (trimmed.length > 1000) throw new BadRequestException('El mensaje es demasiado largo (máx. 1000 caracteres)');
+
+    const { rows } = await pool.query(`SELECT passenger_id, driver_id FROM trips WHERE id = $1`, [tripId]);
+    const trip = rows[0];
+    if (!trip) throw new NotFoundException('Viaje no encontrado');
+
+    const isPassenger = senderRole === 'passenger' && trip.passenger_id === senderId;
+    const isDriver = senderRole === 'driver' && trip.driver_id === senderId;
+    if (!isPassenger && !isDriver) throw new ForbiddenException('No formás parte de este viaje');
+
+    const { rows: inserted } = await pool.query(
+      `INSERT INTO trip_messages (trip_id, sender_id, sender_role, text)
+       VALUES ($1, $2, $3, $4)
+       RETURNING id, trip_id, sender_id, sender_role, text, created_at`,
+      [tripId, senderId, senderRole, trimmed],
+    );
+    const message = inserted[0];
+
+    // Avisamos por los DOS canales -- lo recibe quien no lo mandó (el
+    // que mandó el mensaje ya lo tiene, se lo agrega solo en la app).
+    this.tripsGateway.notifyTrip(tripId, 'trip:chat:message', message);
+    if (trip.driver_id) {
+      this.driversGateway.notifyDriver(trip.driver_id, 'trip:chat:message', message);
+    }
+
+    return message;
+  }
+
+  async getChatMessages(tripId: string, requesterId: string, requesterRole: string) {
+    const { rows } = await pool.query(`SELECT passenger_id, driver_id FROM trips WHERE id = $1`, [tripId]);
+    const trip = rows[0];
+    if (!trip) throw new NotFoundException('Viaje no encontrado');
+
+    const isPassenger = requesterRole === 'passenger' && trip.passenger_id === requesterId;
+    const isDriver = requesterRole === 'driver' && trip.driver_id === requesterId;
+    if (!isPassenger && !isDriver) throw new ForbiddenException('No formás parte de este viaje');
+
+    const { rows: messages } = await pool.query(
+      `SELECT id, trip_id, sender_id, sender_role, text, created_at
+       FROM trip_messages WHERE trip_id = $1 ORDER BY created_at ASC`,
+      [tripId],
+    );
+    return messages;
+  }
 }

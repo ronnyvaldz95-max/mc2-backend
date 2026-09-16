@@ -35,6 +35,10 @@ interface RateTripDto {
   comment?: string;
 }
 
+interface SendMessageDto {
+  text: string;
+}
+
 // POST /trips  (requiere "Authorization: Bearer <token>" de un pasajero)
 // Body: { pickup: {lat, lon}, dropoff?: {lat, lon} | null, paymentMethod?: 'efectivo'|'transferencia'|'pix' }
 //
@@ -128,5 +132,31 @@ export class TripsController {
     const user = (req as Request & { user: AuthUser }).user;
     await this.tripsService.rateTrip(id, user.sub, user.role, body.score, comment);
     return { ok: true };
+  }
+
+  // POST /trips/:id/messages  (requiere token del pasajero o del
+  // conductor de ESE viaje). Manda un mensaje de chat; el otro lado lo
+  // recibe en vivo por WebSocket (trip:chat:message), no hace falta
+  // pedirlo de nuevo por acá.
+  @Post(':id/messages')
+  @UseGuards(JwtAuthGuard)
+  async sendMessage(@Param('id') id: string, @Body() body: SendMessageDto, @Req() req: Request) {
+    if (typeof body?.text !== 'string' || !body.text.trim()) {
+      throw new BadRequestException('text es requerido');
+    }
+    const user = (req as Request & { user: AuthUser }).user;
+    const message = await this.tripsService.sendChatMessage(id, user.sub, user.role, body.text);
+    return { message };
+  }
+
+  // GET /trips/:id/messages  (requiere token del pasajero o del
+  // conductor de ESE viaje). Historial completo, más antiguo primero
+  // -- para cuando se abre la pantalla de chat.
+  @Get(':id/messages')
+  @UseGuards(JwtAuthGuard)
+  async getMessages(@Param('id') id: string, @Req() req: Request) {
+    const user = (req as Request & { user: AuthUser }).user;
+    const messages = await this.tripsService.getChatMessages(id, user.sub, user.role);
+    return { messages };
   }
 }
