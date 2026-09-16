@@ -111,6 +111,10 @@ export class TripsService {
       driverId,
     ]);
 
+    // A partir de ahora, cada driver:ping de este conductor le manda su
+    // ubicación en vivo al pasajero de este viaje (ver DriversGateway).
+    this.driversGateway.setActiveTrip(driverId, tripId);
+
     const { rows } = await pool.query(
       `SELECT u.full_name, u.rating, v.vehicle_type, v.plate
        FROM users u
@@ -192,6 +196,7 @@ export class TripsService {
       throw new BadRequestException(`No se puede finalizar un viaje en estado '${trip.status}'`);
     }
     await pool.query(`UPDATE trips SET status = 'completed', completed_at = now() WHERE id = $1`, [tripId]);
+    this.driversGateway.setActiveTrip(driverId, null);
     this.tripsGateway.notifyTrip(tripId, 'trip:completed', { trip_id: tripId });
     this.logger.log(`Viaje ${tripId}: completado por conductor ${driverId}`);
   }
@@ -214,6 +219,10 @@ export class TripsService {
 
     const newStatus = isDriver ? 'cancelled_by_driver' : 'cancelled_by_passenger';
     await pool.query(`UPDATE trips SET status = $2, cancelled_at = now() WHERE id = $1`, [tripId, newStatus]);
+
+    if (trip.driver_id) {
+      this.driversGateway.setActiveTrip(trip.driver_id, null);
+    }
 
     const cancelledBy = isDriver ? 'driver' : 'passenger';
     this.tripsGateway.notifyTrip(tripId, 'trip:cancelled', { trip_id: tripId, cancelled_by: cancelledBy });

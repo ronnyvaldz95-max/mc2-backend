@@ -19,8 +19,9 @@ import {
   OnGatewayDisconnect,
   SubscribeMessage,
   WebSocketGateway,
+  WebSocketServer,
 } from '@nestjs/websockets';
-import { Socket } from 'socket.io';
+import { Server, Socket } from 'socket.io';
 import { AuthUser } from '../auth/jwt-auth.guard';
 import { DriversService } from './drivers.service';
 
@@ -53,9 +54,23 @@ interface TripRespondPayload {
 export class DriversGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private readonly logger = new Logger(DriversGateway.name);
 
+  // Mismo servidor de Socket.IO que usa TripsGateway (comparten el
+  // namespace por defecto) -- lo usamos para mandarle la ubicación en
+  // vivo del conductor a la sala del viaje (trip:<id>) sin tener que
+  // inyectar TripsGateway acá, lo que crearía una dependencia circular
+  // entre TripsModule y DriversModule.
+  @WebSocketServer()
+  server: Server;
+
   // driverId -> socket activo. Nos deja mandarle una oferta de viaje
   // directo a SU conexión, sin tener que hacer broadcast a todos.
   private readonly driverSockets = new Map<string, Socket>();
+
+  // driverId -> tripId del viaje activo (accepted / in_progress). Lo
+  // pone TripsService cuando se acepta un viaje y lo limpia cuando
+  // termina o se cancela -- así sabemos a qué sala mandar cada
+  // driver:ping sin consultar la base de datos en cada ping.
+  private readonly driverActiveTrip = new Map<string, string>();
 
   // tripId -> oferta pendiente de respuesta de ese conductor puntual.
   private readonly pendingTripOffers = new Map<string, { driverId: string; resolve: (accepted: boolean) => void }>();
@@ -118,6 +133,24 @@ export class DriversGateway implements OnGatewayConnection, OnGatewayDisconnect 
       return;
     }
     await this.driversService.updateDriverLocation(driverId, payload.lat, payload.lon);
+
+    // Si tiene un viaje activo, el pasajero está esperando verlo llegar
+    // en el mapa -- le mandamos la posición a la sala de ese viaje.
+    const tripId = this.driverActiveTrip.get(driverId);
+    if (tripId) {
+      this.server.to(`trip:${tripId}`).emit('trip:driver_location', { lat: payload.lat, lon: payload.lon });
+    }
+  }
+
+  // TripsService llama esto cuando un viaje pasa a estar activo para
+  // este conductor (aceptado) y cuando deja de estarlo (completado o
+  // cancelado), para saber a qué viaje mandarle la ubicación en vivo.
+  setActiveTrip(driverId: string, tripId: string | null): void {
+    if (tripId) {
+      this.driverActiveTrip.set(driverId, tripId);
+    } else {
+      this.driverActiveTrip.delete(driverId);
+    }
   }
 
   @SubscribeMessage('driver:offline')
