@@ -115,6 +115,25 @@ export class DriversGateway implements OnGatewayConnection, OnGatewayDisconnect 
     }
 
     const driverId = decoded.sub;
+
+    // Solo conductores aprobados desde el panel de admin pueden
+    // ponerse online. 'driver:blocked' trae el motivo para que la app
+    // muestre "Tu cuenta está en revisión" / "suspendida", y
+    // 'driver:error' lo cubre en versiones de la app que no lo conocen.
+    const approval = await this.driversService.getApprovalStatus(driverId);
+    if (approval !== 'approved') {
+      const reason = approval ?? 'not_found';
+      const messages: Record<string, string> = {
+        pending: 'Tu cuenta de conductor está en revisión. Te avisamos por WhatsApp cuando esté aprobada.',
+        suspended: 'Tu cuenta de conductor está suspendida. Comunicate con MC2.',
+        rejected: 'Tu solicitud de conductor no fue aprobada. Comunicate con MC2.',
+        not_found: 'No encontramos tu perfil de conductor.',
+      };
+      client.emit('driver:blocked', { reason });
+      client.emit('driver:error', { message: messages[reason] ?? messages.not_found });
+      return;
+    }
+
     client.data.driverId = driverId;
     this.driverSockets.set(driverId, client);
     await this.driversService.setDriverOnline(driverId, payload.lat, payload.lon);
@@ -200,6 +219,17 @@ export class DriversGateway implements OnGatewayConnection, OnGatewayDisconnect 
 
       socket.emit('trip:offer', offer);
     });
+  }
+
+  // Lo saca de la lista de conductores conectados (lo usa el panel de
+  // admin al suspender). No cierra el socket para que la app reciba el
+  // aviso de driver:blocked que se manda justo antes.
+  disconnectDriver(driverId: string): void {
+    const socket = this.driverSockets.get(driverId);
+    if (socket) {
+      socket.data.driverId = undefined;
+      this.driverSockets.delete(driverId);
+    }
   }
 
   // Manda un evento directo al socket ya abierto de un conductor

@@ -125,7 +125,9 @@ export class AuthService {
       );
 
       await client.query('COMMIT');
-      return this.authResponse(user);
+      // Entra 'pending': no puede ponerse online hasta que un admin
+      // lo apruebe desde el panel (driver_profiles.approval_status).
+      return { ...this.authResponse(user), approval_status: 'pending' };
     } catch (err: any) {
       await client.query('ROLLBACK');
       if (err.code === '23505') throw new ConflictException('Ese teléfono o esa patente ya están registrados');

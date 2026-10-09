@@ -9,5 +9,6 @@ import { TripsGateway } from './trips.gateway';
   imports: [DriversModule, AuthModule],
   controllers: [TripsController],
   providers: [TripsService, TripsGateway],
+  exports: [TripsService, TripsGateway],
 })
 export class TripsModule {}

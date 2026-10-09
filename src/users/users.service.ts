@@ -13,7 +13,9 @@ const SALT_ROUNDS = 10;
 export class UsersService {
   async getMe(userId: string) {
     const { rows } = await pool.query(
-      `SELECT id, full_name, phone, role, rating, created_at FROM users WHERE id = $1 AND is_active = TRUE`,
+      `SELECT u.id, u.full_name, u.phone, u.role, u.rating, u.created_at, dp.approval_status
+       FROM users u LEFT JOIN driver_profiles dp ON dp.user_id = u.id
+       WHERE u.id = $1 AND u.is_active = TRUE`,
       [userId],
     );
     if (rows.length === 0) throw new UnauthorizedException('Usuario no encontrado');

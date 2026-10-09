@@ -79,7 +79,8 @@ export class DriversService {
        FROM users u
        JOIN driver_profiles dp ON dp.user_id = u.id
        LEFT JOIN vehicles v ON v.id = dp.active_vehicle_id
-       WHERE u.id = ANY($1::uuid[]) AND dp.status = 'online'`,
+       WHERE u.id = ANY($1::uuid[]) AND dp.status = 'online'
+         AND dp.approval_status = 'approved' AND u.is_active = TRUE`,
       [ids],
     );
 
@@ -101,6 +102,21 @@ export class DriversService {
       })
       .sort((a, b) => a.distance_m - b.distance_m)
       .slice(0, maxResults);
+  }
+
+  /**
+   * Estado de aprobación del conductor ('pending' | 'approved' |
+   * 'suspended' | 'rejected'), o null si no existe / la cuenta fue
+   * eliminada. Solo 'approved' puede ponerse online.
+   */
+  async getApprovalStatus(driverId: string): Promise<string | null> {
+    const { rows } = await pool.query(
+      `SELECT dp.approval_status
+       FROM driver_profiles dp JOIN users u ON u.id = dp.user_id
+       WHERE dp.user_id = $1 AND u.is_active = TRUE`,
+      [driverId],
+    );
+    return rows[0]?.approval_status ?? null;
   }
 
   // --- Ciclo de vida online/offline + posición en vivo ---------------
