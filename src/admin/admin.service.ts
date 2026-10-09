@@ -106,9 +106,9 @@ export class AdminService implements OnModuleInit, OnModuleDestroy {
   async setDriverStatus(driverId: string, status: ApprovalStatus, notes: string | null) {
     const { rows } = await pool.query(
       `UPDATE driver_profiles
-       SET approval_status = $2,
-           approval_notes  = COALESCE($3, approval_notes),
-           approved_at     = CASE WHEN $2 = 'approved' THEN now() ELSE approved_at END,
+       SET approval_status = $2::text,
+           approval_notes  = COALESCE($3::text, approval_notes),
+           approved_at     = CASE WHEN $2::text = 'approved' THEN now() ELSE approved_at END,
            updated_at      = now()
        WHERE user_id = $1
        RETURNING user_id AS id, approval_status, approval_notes, approved_at`,
