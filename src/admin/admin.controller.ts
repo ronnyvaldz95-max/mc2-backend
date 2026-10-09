@@ -1,5 +1,6 @@
 import { BadRequestException, Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { AdminGuard } from '../auth/admin.guard';
+import { COMMISSION_DEBT_LIMIT } from '../drivers/drivers.service';
 import { APPROVAL_STATUSES, AdminService, ApprovalStatus } from './admin.service';
 
 // Todo /admin/* exige "Authorization: Bearer <token>" de una cuenta
@@ -53,7 +54,7 @@ export class AdminController {
 
   @Get('commissions')
   async commissions() {
-    return { drivers: await this.adminService.listCommissions() };
+    return { drivers: await this.adminService.listCommissions(), debt_limit: COMMISSION_DEBT_LIMIT };
   }
 
   @Post('commissions/:driverId/paid')

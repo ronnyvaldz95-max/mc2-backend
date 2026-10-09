@@ -23,7 +23,7 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { AuthUser } from '../auth/jwt-auth.guard';
-import { DriversService } from './drivers.service';
+import { COMMISSION_DEBT_LIMIT, DriversService } from './drivers.service';
 
 interface DriverOnlinePayload {
   token: string;
@@ -131,6 +131,18 @@ export class DriversGateway implements OnGatewayConnection, OnGatewayDisconnect 
       };
       client.emit('driver:blocked', { reason });
       client.emit('driver:error', { message: messages[reason] ?? messages.not_found });
+      return;
+    }
+
+    // Bloqueo por deuda de comisión (como inDrive/Bolt): hasta que pague
+    // y lo marques en el panel, no recibe viajes.
+    const debt = await this.driversService.getCommissionDebt(driverId);
+    if (debt >= COMMISSION_DEBT_LIMIT) {
+      const amount = debt.toLocaleString('es-PY');
+      client.emit('driver:blocked', { reason: 'debt', amount: debt });
+      client.emit('driver:error', {
+        message: `Tenés Gs. ${amount} de comisión pendiente. Pagá a MC2 para volver a recibir viajes.`,
+      });
       return;
     }
 

@@ -9,6 +9,7 @@ import { BadRequestException, ConflictException, Injectable, UnauthorizedExcepti
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
 import { pool } from '../db';
+import { normalizePhone } from '../phone';
 
 const SALT_ROUNDS = 10;
 
@@ -66,7 +67,7 @@ export class AuthService {
         `INSERT INTO users (full_name, phone, password_hash, role)
          VALUES ($1, $2, $3, 'passenger')
          RETURNING id, full_name, role`,
-        [input.fullName, input.phone, passwordHash],
+        [input.fullName, normalizePhone(input.phone), passwordHash],
       );
       return this.authResponse(rows[0]);
     } catch (err: any) {
@@ -99,7 +100,7 @@ export class AuthService {
         `INSERT INTO users (full_name, phone, password_hash, role)
          VALUES ($1, $2, $3, 'driver')
          RETURNING id, full_name, role`,
-        [input.fullName, input.phone, passwordHash],
+        [input.fullName, normalizePhone(input.phone), passwordHash],
       );
       const user = userRows[0];
 
@@ -140,8 +141,12 @@ export class AuthService {
   async login(phone: string, password: string) {
     if (!phone || !password) throw new BadRequestException('phone y password son requeridos');
     const { rows } = await pool.query(
-      `SELECT id, full_name, role, password_hash, is_active FROM users WHERE phone = $1`,
-      [phone],
+      // Busca por el número normalizado, y también tal cual vino por si
+      // quedó alguna cuenta vieja sin normalizar.
+      `SELECT id, full_name, role, password_hash, is_active FROM users
+       WHERE phone = $1 OR phone = $2
+       ORDER BY (phone = $1) DESC LIMIT 1`,
+      [normalizePhone(phone), String(phone).trim()],
     );
     const user = rows[0];
     if (!user) throw new UnauthorizedException('Teléfono o contraseña incorrectos');

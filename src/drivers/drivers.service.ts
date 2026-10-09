@@ -2,7 +2,7 @@
 // Servicio de matching pasajero <-> conductor + gestión de estado
 // online/offline y posición en vivo de los conductores.
 // =============================================================
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { pool, redis, DRIVERS_GEO_KEY } from '../db';
 
 const EARTH_AVG_SPEED_KMH = 25; // velocidad promedio urbana estimada, ajustar según la ciudad
@@ -11,6 +11,11 @@ const EARTH_AVG_SPEED_KMH = 25; // velocidad promedio urbana estimada, ajustar s
 // para no machacar la base de datos con un write por cada ping de 3-5s.
 // El camino caliente del matching SIEMPRE lee de Redis, nunca de esto.
 const POSTGRES_SYNC_INTERVAL_MS = 30_000;
+
+// Si un conductor debe esta comisión o más (en guaraníes), no puede
+// ponerse online ni recibir viajes hasta que lo marques pagado en el
+// panel. Se cambia con la variable de entorno COMMISSION_DEBT_LIMIT.
+export const COMMISSION_DEBT_LIMIT = Number(process.env.COMMISSION_DEBT_LIMIT) || 30_000;
 
 export interface NearbyDriver {
   driver_id: string;
@@ -30,10 +35,35 @@ function estimateEtaMinutes(distanceMeters: number): number {
 }
 
 @Injectable()
-export class DriversService {
+export class DriversService implements OnModuleInit {
   private readonly logger = new Logger(DriversService.name);
   // driverId -> timestamp del último write a Postgres (en memoria, por proceso)
   private readonly lastPostgresSync = new Map<string, number>();
+
+  // Al arrancar el servidor (por ejemplo, después de que Render lo
+  // duerma o lo redespliegue) ningún conductor tiene un socket abierto
+  // todavía: los que figuraban 'online' son fantasmas. Los pasamos a
+  // offline y vaciamos el índice de Redis; cada app vuelve a mandar
+  // driver:online al reconectarse.
+  async onModuleInit() {
+    try {
+      const r = await pool.query(`UPDATE driver_profiles SET status = 'offline' WHERE status = 'online'`);
+      await redis.del(DRIVERS_GEO_KEY);
+      this.logger.log(`Arranque: ${r.rowCount} conductor(es) fantasma pasados a offline`);
+    } catch (err: any) {
+      this.logger.error(`No se pudo limpiar conductores online al arrancar: ${err.message}`);
+    }
+  }
+
+  /** Comisión que el conductor todavía no pagó (Gs.). */
+  async getCommissionDebt(driverId: string): Promise<number> {
+    const { rows } = await pool.query(
+      `SELECT COALESCE(SUM(commission_amount), 0)::int AS owed
+       FROM trips WHERE driver_id = $1 AND status = 'completed' AND commission_paid_at IS NULL`,
+      [driverId],
+    );
+    return rows[0].owed;
+  }
 
   async findNearbyDrivers(
     lat: number,
@@ -80,8 +110,11 @@ export class DriversService {
        JOIN driver_profiles dp ON dp.user_id = u.id
        LEFT JOIN vehicles v ON v.id = dp.active_vehicle_id
        WHERE u.id = ANY($1::uuid[]) AND dp.status = 'online'
-         AND dp.approval_status = 'approved' AND u.is_active = TRUE`,
-      [ids],
+         AND dp.approval_status = 'approved' AND u.is_active = TRUE
+         AND (SELECT COALESCE(SUM(t.commission_amount), 0) FROM trips t
+              WHERE t.driver_id = u.id AND t.status = 'completed'
+                AND t.commission_paid_at IS NULL) < $2`,
+      [ids, COMMISSION_DEBT_LIMIT],
     );
 
     // Paso 3: combinar, ordenar por distancia real, cortar a maxResults.

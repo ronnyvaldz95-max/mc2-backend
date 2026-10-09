@@ -7,6 +7,7 @@
 // =============================================================
 require('dotenv').config();
 const { Pool } = require('pg');
+const { normalizePhone } = require('./phone');
 
 const phone = process.argv[2];
 if (!phone) {
@@ -27,7 +28,7 @@ const pool = process.env.DATABASE_URL
     });
 
 pool
-  .query(`UPDATE users SET role = 'admin' WHERE phone = $1 RETURNING id, full_name, role`, [phone])
+  .query(`UPDATE users SET role = 'admin' WHERE phone = $1 RETURNING id, full_name, role`, [normalizePhone(phone)])
   .then(async (r) => {
     if (r.rowCount === 0) console.error(`No hay ningún usuario con teléfono ${phone}`);
     else console.log(`Listo: ${r.rows[0].full_name} ahora es admin.`);

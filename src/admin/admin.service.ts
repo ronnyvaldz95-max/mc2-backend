@@ -4,9 +4,9 @@
 // comisiones (Gs. 3.000 por viaje completado, cobradas en efectivo
 // o transferencia y marcadas a mano como pagadas).
 // =============================================================
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { pool } from '../db';
-import { DriversService } from '../drivers/drivers.service';
+import { COMMISSION_DEBT_LIMIT, DriversService } from '../drivers/drivers.service';
 import { DriversGateway } from '../drivers/drivers.gateway';
 import { TripsGateway } from '../trips/trips.gateway';
 
@@ -16,9 +16,52 @@ export type ApprovalStatus = (typeof APPROVAL_STATUSES)[number];
 // Estados de un viaje que todavía no terminó.
 const ACTIVE_TRIP_STATUSES = ['requested', 'matched', 'accepted', 'arrived', 'in_progress'];
 
+// Un viaje que no avanza en este tiempo se considera abandonado y se
+// cancela solo (como hacen Uber/Bolt), para que no quede "en curso"
+// para siempre ni bloquee al conductor.
+const STALE_TRIP_SQL = `
+  (status = 'requested' AND requested_at < now() - interval '30 minutes')
+  OR (status IN ('matched', 'accepted', 'arrived') AND COALESCE(matched_at, requested_at) < now() - interval '3 hours')
+  OR (status = 'in_progress' AND COALESCE(started_at, matched_at, requested_at) < now() - interval '6 hours')
+`;
+const STALE_CHECK_EVERY_MS = 10 * 60_000;
+
 @Injectable()
-export class AdminService {
+export class AdminService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(AdminService.name);
+  private staleTimer?: NodeJS.Timeout;
+
+  onModuleInit() {
+    void this.cancelStaleTrips();
+    this.staleTimer = setInterval(() => void this.cancelStaleTrips(), STALE_CHECK_EVERY_MS);
+  }
+
+  onModuleDestroy() {
+    if (this.staleTimer) clearInterval(this.staleTimer);
+  }
+
+  async cancelStaleTrips(): Promise<number> {
+    try {
+      const { rows } = await pool.query(
+        `UPDATE trips SET status = 'cancelled_by_admin', cancelled_at = now()
+         WHERE ${STALE_TRIP_SQL}
+         RETURNING id, driver_id`,
+      );
+      for (const t of rows) {
+        const payload = { trip_id: t.id, cancelled_by: 'admin', reason: 'stale' };
+        this.tripsGateway.notifyTrip(t.id, 'trip:cancelled', payload);
+        if (t.driver_id) {
+          this.driversGateway.setActiveTrip(t.driver_id, null);
+          this.driversGateway.notifyDriver(t.driver_id, 'trip:cancelled', payload);
+        }
+      }
+      if (rows.length) this.logger.log(`${rows.length} viaje(s) abandonados cancelados automáticamente`);
+      return rows.length;
+    } catch (err: any) {
+      this.logger.error(`No se pudieron cancelar viajes abandonados: ${err.message}`);
+      return 0;
+    }
+  }
 
   constructor(
     private readonly driversService: DriversService,
@@ -39,7 +82,7 @@ export class AdminService {
          (SELECT COALESCE(SUM(commission_amount), 0) FROM trips WHERE status = 'completed' AND commission_paid_at IS NULL)::int AS commission_owed`,
       [ACTIVE_TRIP_STATUSES],
     );
-    return rows[0];
+    return { ...rows[0], debt_limit: COMMISSION_DEBT_LIMIT };
   }
 
   async listDrivers(status?: ApprovalStatus) {
