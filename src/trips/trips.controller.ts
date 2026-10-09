@@ -87,6 +87,16 @@ export class TripsController {
     return { trips };
   }
 
+  // GET /trips/driver/active  (requiere token de conductor)
+  // El viaje que el conductor tiene aceptado o en curso, o null. La app
+  // lo pide al abrirse para recuperar el viaje si se cerró a la mitad.
+  @Get('driver/active')
+  @UseGuards(JwtAuthGuard)
+  async driverActive(@Req() req: Request) {
+    const user = (req as Request & { user: AuthUser }).user;
+    return { trip: await this.tripsService.getDriverActiveTrip(user.sub) };
+  }
+
   // POST /trips/:id/start  (requiere token del CONDUCTOR asignado)
   // El conductor marca que arrancó el viaje (recogió al pasajero).
   @Post(':id/start')

@@ -170,6 +170,32 @@ export class TripsService {
     return rows;
   }
 
+  // Viaje activo (aceptado o en curso) de un conductor, o null.
+  async getDriverActiveTrip(driverId: string) {
+    const { rows } = await pool.query(
+      `SELECT
+         t.id, t.status, t.payment_method,
+         ST_Y(t.pickup_location::geometry) AS pickup_lat,
+         ST_X(t.pickup_location::geometry) AS pickup_lon,
+         CASE WHEN t.dropoff_location IS NULL THEN NULL ELSE ST_Y(t.dropoff_location::geometry) END AS dropoff_lat,
+         CASE WHEN t.dropoff_location IS NULL THEN NULL ELSE ST_X(t.dropoff_location::geometry) END AS dropoff_lon
+       FROM trips t
+       WHERE t.driver_id = $1 AND t.status IN ('accepted', 'arrived', 'in_progress')
+       ORDER BY t.matched_at DESC NULLS LAST
+       LIMIT 1`,
+      [driverId],
+    );
+    const t = rows[0];
+    if (!t) return null;
+    return {
+      trip_id: t.id,
+      status: t.status,
+      payment_method: t.payment_method,
+      pickup: { lat: Number(t.pickup_lat), lon: Number(t.pickup_lon) },
+      dropoff: t.dropoff_lat == null ? null : { lat: Number(t.dropoff_lat), lon: Number(t.dropoff_lon) },
+    };
+  }
+
   // El conductor asignado marca que arrancó el viaje (recogió al
   // pasajero). Solo válido desde 'accepted'.
   async startTrip(tripId: string, driverId: string): Promise<void> {

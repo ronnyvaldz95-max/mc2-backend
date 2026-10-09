@@ -22,6 +22,7 @@ import {
   WebSocketServer,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
+import { pool } from '../db';
 import { AuthUser } from '../auth/jwt-auth.guard';
 import { COMMISSION_DEBT_LIMIT, DriversService } from './drivers.service';
 
@@ -149,6 +150,16 @@ export class DriversGateway implements OnGatewayConnection, OnGatewayDisconnect 
     client.data.driverId = driverId;
     this.driverSockets.set(driverId, client);
     await this.driversService.setDriverOnline(driverId, payload.lat, payload.lon);
+
+    // Si se reconecta (cerró la app, o el servidor se reinició) con un
+    // viaje a medias, volvemos a mandarle su ubicación al pasajero.
+    const { rows: active } = await pool.query(
+      `SELECT id FROM trips WHERE driver_id = $1 AND status IN ('accepted', 'arrived', 'in_progress')
+       ORDER BY matched_at DESC NULLS LAST LIMIT 1`,
+      [driverId],
+    );
+    if (active[0]) this.setActiveTrip(driverId, active[0].id);
+
     client.emit('driver:online:ack', { ok: true, driverId });
   }
 
