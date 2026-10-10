@@ -3,6 +3,10 @@
 require('dotenv').config();
 const { Pool } = require('pg');
 const { normalizePhone } = require('./phone');
+if (normalizePhone(process.argv[2] || '').replace(/\D/g, '').length < 8) {
+  console.error(`"${process.argv[2] || ''}" no parece un teléfono válido. Escribilo con números, por ejemplo 0981123456.`);
+  process.exit(1);
+}
 const bcrypt = require('bcryptjs');
 
 const [phone, password] = process.argv.slice(2);
