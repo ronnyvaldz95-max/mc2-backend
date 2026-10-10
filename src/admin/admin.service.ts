@@ -176,6 +176,38 @@ export class AdminService implements OnModuleInit, OnModuleDestroy {
     this.logger.log(`Viaje ${tripId}: cancelado por admin`);
   }
 
+  async listPassengers(search?: string) {
+    const term = search?.trim() ? `%${search.trim()}%` : null;
+    const { rows } = await pool.query(
+      `SELECT
+         u.id, u.full_name, u.phone, u.document_number, u.rating, u.rating_count, u.created_at,
+         COALESCE(u.blocked, FALSE) AS blocked,
+         COUNT(t.id) FILTER (WHERE t.status = 'completed')::int AS completed_trips,
+         COUNT(t.id) FILTER (WHERE t.status = 'cancelled_by_passenger')::int AS cancelled_trips,
+         MAX(t.requested_at) AS last_trip_at
+       FROM users u
+       LEFT JOIN trips t ON t.passenger_id = u.id
+       WHERE u.role = 'passenger' AND u.is_active = TRUE
+         AND ($1::text IS NULL OR u.full_name ILIKE $1 OR u.phone ILIKE $1)
+       GROUP BY u.id
+       ORDER BY u.created_at DESC
+       LIMIT 300`,
+      [term],
+    );
+    return rows;
+  }
+
+  async setUserBlocked(userId: string, blocked: boolean) {
+    const { rows } = await pool.query(
+      `UPDATE users SET blocked = $2, updated_at = now() WHERE id = $1 AND role <> 'admin'
+       RETURNING id, full_name, blocked`,
+      [userId, blocked],
+    );
+    if (rows.length === 0) throw new NotFoundException('Usuario no encontrado');
+    this.logger.log(`Usuario ${userId} -> ${blocked ? 'bloqueado' : 'desbloqueado'}`);
+    return rows[0];
+  }
+
   async listCommissions() {
     const { rows } = await pool.query(
       `SELECT

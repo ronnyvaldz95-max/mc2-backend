@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, ForbiddenException, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
 import { TripsService } from './trips.service';
 import { AuthUser, JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -65,6 +65,9 @@ export class TripsController {
     }
 
     const user = (req as Request & { user: AuthUser }).user;
+    if (await this.tripsService.isBlocked(user.sub)) {
+      throw new ForbiddenException('Tu cuenta está bloqueada. Comunicate con MC2.');
+    }
 
     const { tripId, fareGs } = await this.tripsService.createTrip({
       passengerId: user.sub,

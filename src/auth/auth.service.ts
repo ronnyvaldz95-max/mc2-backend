@@ -13,16 +13,25 @@ import { normalizePhone } from '../phone';
 
 const SALT_ROUNDS = 10;
 
+// Cédula: solo dígitos (saca puntos, guiones y espacios). Vacío si no
+// tiene al menos 5 dígitos.
+function cleanDoc(raw: unknown): string {
+  const d = String(raw ?? '').replace(/\D/g, '');
+  return d.length >= 5 ? d : '';
+}
+
 export interface RegisterPassengerInput {
   fullName: string;
   phone: string;
   password: string;
+  documentNumber: string;
 }
 
 export interface RegisterDriverInput {
   fullName: string;
   phone: string;
   password: string;
+  documentNumber: string;
   licenseNumber: string;
   vehicle: {
     plate: string;
@@ -55,8 +64,8 @@ export class AuthService {
   }
 
   async registerPassenger(input: RegisterPassengerInput) {
-    if (!input?.fullName || !input?.phone || !input?.password) {
-      throw new BadRequestException('fullName, phone y password son requeridos');
+    if (!input?.fullName || !input?.phone || !input?.password || !cleanDoc(input?.documentNumber)) {
+      throw new BadRequestException('Completá nombre, teléfono, contraseña y número de cédula');
     }
     if (input.password.length < 6) {
       throw new BadRequestException('La contraseña debe tener al menos 6 caracteres');
@@ -64,10 +73,10 @@ export class AuthService {
     const passwordHash = await bcrypt.hash(input.password, SALT_ROUNDS);
     try {
       const { rows } = await pool.query(
-        `INSERT INTO users (full_name, phone, password_hash, role)
-         VALUES ($1, $2, $3, 'passenger')
+        `INSERT INTO users (full_name, phone, password_hash, role, document_number)
+         VALUES ($1, $2, $3, 'passenger', $4)
          RETURNING id, full_name, role`,
-        [input.fullName, normalizePhone(input.phone), passwordHash],
+        [input.fullName, normalizePhone(input.phone), passwordHash, cleanDoc(input.documentNumber)],
       );
       return this.authResponse(rows[0]);
     } catch (err: any) {
@@ -81,6 +90,7 @@ export class AuthService {
       !input?.fullName ||
       !input?.phone ||
       !input?.password ||
+      !cleanDoc(input?.documentNumber) ||
       !input?.licenseNumber ||
       !input?.vehicle?.plate?.trim() ||
       !input?.vehicle?.vehicleType ||
@@ -89,7 +99,7 @@ export class AuthService {
       !input?.vehicle?.color?.trim()
     ) {
       throw new BadRequestException(
-        'Completá todos los datos: nombre, teléfono, contraseña, licencia, y del vehículo patente, tipo, marca, modelo y color',
+        'Completá todos los datos: nombre, teléfono, contraseña, cédula, licencia, y del vehículo patente, tipo, marca, modelo y color',
       );
     }
     if (input.password.length < 6) {
@@ -100,10 +110,10 @@ export class AuthService {
     try {
       await client.query('BEGIN');
       const { rows: userRows } = await client.query(
-        `INSERT INTO users (full_name, phone, password_hash, role)
-         VALUES ($1, $2, $3, 'driver')
+        `INSERT INTO users (full_name, phone, password_hash, role, document_number)
+         VALUES ($1, $2, $3, 'driver', $4)
          RETURNING id, full_name, role`,
-        [input.fullName, normalizePhone(input.phone), passwordHash],
+        [input.fullName, normalizePhone(input.phone), passwordHash, cleanDoc(input.documentNumber)],
       );
       const user = userRows[0];
 
@@ -146,7 +156,7 @@ export class AuthService {
     const { rows } = await pool.query(
       // Busca por el número normalizado, y también tal cual vino por si
       // quedó alguna cuenta vieja sin normalizar.
-      `SELECT id, full_name, role, password_hash, is_active FROM users
+      `SELECT id, full_name, role, password_hash, is_active, COALESCE(blocked, FALSE) AS blocked FROM users
        WHERE phone = $1 OR phone = $2
        ORDER BY (phone = $1) DESC LIMIT 1`,
       [normalizePhone(phone), String(phone).trim()],
@@ -156,6 +166,7 @@ export class AuthService {
     const valid = await bcrypt.compare(password, user.password_hash);
     if (!valid) throw new UnauthorizedException('Teléfono o contraseña incorrectos');
     if (!user.is_active) throw new UnauthorizedException('Esta cuenta fue eliminada');
+    if (user.blocked) throw new UnauthorizedException('Tu cuenta está bloqueada. Comunicate con MC2.');
     return this.authResponse(user);
   }
 }

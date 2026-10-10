@@ -11,6 +11,8 @@ import { APPROVAL_STATUSES, AdminService, ApprovalStatus } from './admin.service
 // PATCH /admin/drivers/:id/status            -> { status, notes? }
 // GET   /admin/trips?scope=active|today|all  -> viajes
 // POST  /admin/trips/:id/cancel              -> cancela cualquier viaje no terminado
+// GET   /admin/passengers?q=                 -> pasajeros (búsqueda opcional)
+// PATCH /admin/users/:id/blocked             -> { blocked: true|false }
 // GET   /admin/commissions                   -> deuda de comisión por conductor
 // POST  /admin/commissions/:driverId/paid    -> marca todo lo adeudado como pagado
 @Controller('admin')
@@ -50,6 +52,17 @@ export class AdminController {
   async cancelTrip(@Param('id') id: string) {
     await this.adminService.cancelTrip(id);
     return { ok: true };
+  }
+
+  @Get('passengers')
+  async passengers(@Query('q') q?: string) {
+    return { passengers: await this.adminService.listPassengers(q) };
+  }
+
+  @Patch('users/:id/blocked')
+  async setBlocked(@Param('id') id: string, @Body() body: { blocked?: boolean }) {
+    if (typeof body?.blocked !== 'boolean') throw new BadRequestException('blocked tiene que ser true o false');
+    return { user: await this.adminService.setUserBlocked(id, body.blocked) };
   }
 
   @Get('commissions')

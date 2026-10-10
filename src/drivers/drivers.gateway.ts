@@ -47,6 +47,8 @@ export interface TripOfferPayload {
   // Lo que el conductor le cobra al pasajero (Gs.). null si el
   // pasajero no informó destino.
   fareGs: number | null;
+  // Primer nombre y calificación del pasajero.
+  passenger: { name: string; phone: string; rating: number | null; rating_count: number } | null;
 }
 
 interface TripRespondPayload {
