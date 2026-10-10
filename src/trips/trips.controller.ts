@@ -20,6 +20,8 @@ interface CreateTripDto {
   // Si no se manda, queda 'efectivo' (el default de la columna en la
   // base de datos y también el de la app).
   paymentMethod?: PaymentMethod;
+  // 'auto' (default) o 'moto'
+  vehicleCategory?: 'auto' | 'moto';
 }
 
 function isValidLatLon(v: unknown): v is LatLonDto {
@@ -74,6 +76,7 @@ export class TripsController {
       pickup: body.pickup,
       dropoff: body.dropoff ?? null,
       paymentMethod: body.paymentMethod ?? 'efectivo',
+      vehicleCategory: body.vehicleCategory === 'moto' ? 'moto' : 'auto',
     });
 
     return { trip_id: tripId, status: 'requested', fare_gs: fareGs };

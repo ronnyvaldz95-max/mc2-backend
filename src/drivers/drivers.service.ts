@@ -142,6 +142,8 @@ export class DriversService implements OnModuleInit {
     lon: number,
     radiusMeters = 3000,
     maxResults = 5,
+    // 'moto' = solo motos, 'auto' = solo autos/camionetas, null = todos
+    category: 'auto' | 'moto' | null = null,
   ): Promise<NearbyDriver[]> {
     // Paso 1: Redis GEOSEARCH -- rápido, en memoria, es el camino caliente.
     // Nota: Redis espera (lon, lat), al revés de como lo decimos en español.
@@ -185,8 +187,11 @@ export class DriversService implements OnModuleInit {
          AND dp.approval_status = 'approved' AND u.is_active = TRUE
          AND (SELECT COALESCE(SUM(t.commission_amount), 0) FROM trips t
               WHERE t.driver_id = u.id AND t.status = 'completed'
-                AND t.commission_paid_at IS NULL) < $2`,
-      [ids, COMMISSION_DEBT_LIMIT],
+                AND t.commission_paid_at IS NULL) < $2
+         AND ($3::text IS NULL
+              OR ($3 = 'moto' AND v.vehicle_type = 'moto')
+              OR ($3 = 'auto' AND COALESCE(v.vehicle_type, '') <> 'moto'))`,
+      [ids, COMMISSION_DEBT_LIMIT, category],
     );
 
     // Paso 3: combinar, ordenar por distancia real, cortar a maxResults.

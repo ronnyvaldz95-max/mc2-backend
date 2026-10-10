@@ -13,6 +13,7 @@
 //   FARE_ROUTE_FACTOR    multiplica la distancia en línea recta para
 //                        acercarla a la distancia real por calles
 //   FARE_ROUND_GS        redondeo del precio final
+//   MOTO_FARE_PERCENT    precio de la moto como % del de auto (70 = 30% más barato)
 //   COMMISSION_PERCENT   % de cada viaje que se queda MC2
 //   COMMISSION_MIN_GS    comisión mínima por viaje
 // =============================================================
@@ -31,6 +32,7 @@ export function getPricing() {
     avg_speed_kmh: num('FARE_AVG_SPEED_KMH', 22),
     route_factor: num('FARE_ROUTE_FACTOR', 1),
     round_gs: num('FARE_ROUND_GS', 500),
+    moto_percent: num('MOTO_FARE_PERCENT', 70),
     commission_percent: num('COMMISSION_PERCENT', 10),
     commission_min_gs: num('COMMISSION_MIN_GS', 3_000),
   };
@@ -45,18 +47,22 @@ export function distanceKm(a: { lat: number; lon: number }, b: { lat: number; lo
   return 2 * R * Math.asin(Math.sqrt(h));
 }
 
+export type VehicleCategory = 'auto' | 'moto';
+
 export function estimateFareGs(
   pickup: { lat: number; lon: number },
   dropoff: { lat: number; lon: number } | null,
+  category: VehicleCategory = 'auto',
 ): number | null {
   if (!dropoff) return null;
   const p = getPricing();
   const km = distanceKm(pickup, dropoff) * p.route_factor;
   const minutes = (km / p.avg_speed_kmh) * 60;
-  const raw =
+  const carRaw =
     p.base_gs +
     Math.max(0, km - p.included_km) * p.per_km_gs +
     Math.max(0, minutes - p.included_min) * p.per_min_gs;
+  const raw = category === 'moto' ? (carRaw * p.moto_percent) / 100 : carRaw;
   const step = p.round_gs > 0 ? p.round_gs : 1;
   return Math.round(raw / step) * step;
 }
