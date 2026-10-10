@@ -55,6 +55,61 @@ export class DriversService implements OnModuleInit {
     }
   }
 
+  /**
+   * Estadísticas para la pantalla "Mis ganancias" del conductor: viajes
+   * y ganancias de hoy / últimos 7 días / total, comisión adeudada a MC2,
+   * su calificación y los últimos comentarios de los pasajeros.
+   * Ganancia = tarifa cobrada - comisión de MC2.
+   */
+  async getDriverStats(driverId: string) {
+    const TODAY = `date_trunc('day', now() AT TIME ZONE 'America/Asuncion') AT TIME ZONE 'America/Asuncion'`;
+    const periodSql = (from: string) => `
+      SELECT
+        COUNT(*)::int AS trips,
+        COALESCE(SUM(fare_gs), 0)::int AS gross,
+        COALESCE(SUM(commission_amount), 0)::int AS commission,
+        COALESCE(SUM(fare_gs - commission_amount) FILTER (WHERE fare_gs IS NOT NULL), 0)::int AS net,
+        COUNT(*) FILTER (WHERE fare_gs IS NULL)::int AS trips_without_fare
+      FROM trips
+      WHERE driver_id = $1 AND status = 'completed' ${from ? `AND completed_at >= ${from}` : ''}`;
+
+    const [today, week, total, profile, debt, cancelled, comments] = await Promise.all([
+      pool.query(periodSql(TODAY), [driverId]),
+      pool.query(periodSql(`${TODAY} - interval '6 days'`), [driverId]),
+      pool.query(periodSql(''), [driverId]),
+      pool.query(`SELECT full_name, rating, rating_count FROM users WHERE id = $1`, [driverId]),
+      this.getCommissionDebt(driverId),
+      pool.query(
+        `SELECT COUNT(*)::int AS n FROM trips
+         WHERE driver_id = $1 AND status = 'cancelled_by_driver' AND requested_at >= now() - interval '30 days'`,
+        [driverId],
+      ),
+      pool.query(
+        `SELECT r.score, r.comment, t.completed_at
+         FROM ratings r JOIN trips t ON t.id = r.trip_id
+         WHERE r.rated_user = $1
+         ORDER BY t.completed_at DESC NULLS LAST
+         LIMIT 5`,
+        [driverId],
+      ),
+    ]);
+
+    const p = profile.rows[0] ?? {};
+    return {
+      full_name: p.full_name ?? null,
+      rating: p.rating == null ? null : Number(p.rating),
+      rating_count: Number(p.rating_count ?? 0),
+      today: today.rows[0],
+      week: week.rows[0],
+      total: total.rows[0],
+      cancelled_last_30_days: cancelled.rows[0].n,
+      commission_owed: debt,
+      debt_limit: COMMISSION_DEBT_LIMIT,
+      blocked_by_debt: debt >= COMMISSION_DEBT_LIMIT,
+      recent_ratings: comments.rows,
+    };
+  }
+
   /** Comisión que el conductor todavía no pagó (Gs.). */
   async getCommissionDebt(driverId: string): Promise<number> {
     const { rows } = await pool.query(

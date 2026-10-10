@@ -1,4 +1,6 @@
-import { BadRequestException, Controller, Get, Query } from '@nestjs/common';
+import { BadRequestException, Controller, ForbiddenException, Get, Query, Req, UseGuards } from '@nestjs/common';
+import type { Request } from 'express';
+import { AuthUser, JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { DriversService } from './drivers.service';
 
 // GET /drivers/nearby?lat=-22.548&lon=-55.7335&radius=3000&max=5
@@ -9,6 +11,16 @@ import { DriversService } from './drivers.service';
 @Controller('drivers')
 export class DriversController {
   constructor(private readonly driversService: DriversService) {}
+
+  // GET /drivers/me/stats  (requiere token de conductor)
+  // Para la pantalla "Mis ganancias" de la app.
+  @Get('me/stats')
+  @UseGuards(JwtAuthGuard)
+  async myStats(@Req() req: Request) {
+    const user = (req as Request & { user: AuthUser }).user;
+    if (user.role !== 'driver') throw new ForbiddenException('Solo para conductores');
+    return this.driversService.getDriverStats(user.sub);
+  }
 
   @Get('nearby')
   async nearby(

@@ -44,6 +44,9 @@ export interface TripOfferPayload {
   dropoff: { lat: number; lon: number } | null;
   // 'efectivo' | 'transferencia' | 'pix'
   paymentMethod: string;
+  // Lo que el conductor le cobra al pasajero (Gs.). null si el
+  // pasajero no informó destino.
+  fareGs: number | null;
 }
 
 interface TripRespondPayload {

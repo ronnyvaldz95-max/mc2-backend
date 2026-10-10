@@ -16,6 +16,7 @@ import { pool } from '../db';
 import { DriversService } from '../drivers/drivers.service';
 import { DriversGateway } from '../drivers/drivers.gateway';
 import { TripsGateway } from './trips.gateway';
+import { estimateFareGs } from '../fare';
 
 const OFFER_TIMEOUT_MS = 15_000;
 
@@ -41,15 +42,17 @@ export class TripsService {
     private readonly tripsGateway: TripsGateway,
   ) {}
 
-  async createTrip(input: CreateTripInput): Promise<{ tripId: string }> {
+  async createTrip(input: CreateTripInput): Promise<{ tripId: string; fareGs: number | null }> {
+    const fareGs = estimateFareGs(input.pickup, input.dropoff);
     const { rows } = await pool.query(
-      `INSERT INTO trips (passenger_id, pickup_location, dropoff_location, payment_method, status)
+      `INSERT INTO trips (passenger_id, pickup_location, dropoff_location, payment_method, status, fare_gs)
        VALUES ($1,
          ST_SetSRID(ST_MakePoint($2, $3), 4326)::geography,
          CASE WHEN $4::double precision IS NULL THEN NULL
               ELSE ST_SetSRID(ST_MakePoint($4, $5), 4326)::geography END,
          $6,
-         'requested')
+         'requested',
+         $7)
        RETURNING id`,
       [
         input.passengerId,
@@ -58,6 +61,7 @@ export class TripsService {
         input.dropoff?.lon ?? null,
         input.dropoff?.lat ?? null,
         input.paymentMethod,
+        fareGs,
       ],
     );
     const tripId = rows[0].id;
@@ -70,9 +74,9 @@ export class TripsService {
     // No lo esperamos: el pasajero ya tiene su trip_id para hacer
     // trip:subscribe. El resultado del matching le llega por WebSocket
     // cuando esté listo (puede tardar hasta OFFER_TIMEOUT_MS * candidatos).
-    void this.matchTrip(tripId, input.pickup, input.dropoff, input.paymentMethod);
+    void this.matchTrip(tripId, input.pickup, input.dropoff, input.paymentMethod, fareGs);
 
-    return { tripId };
+    return { tripId, fareGs };
   }
 
   private async matchTrip(
@@ -80,6 +84,7 @@ export class TripsService {
     pickup: LatLon,
     dropoff: LatLon | null,
     paymentMethod: string,
+    fareGs: number | null,
   ): Promise<void> {
     const candidates = await this.driversService.findNearbyDrivers(pickup.lat, pickup.lon, 3000, 5);
 
@@ -92,7 +97,7 @@ export class TripsService {
       this.logger.log(`Viaje ${tripId}: ofreciendo a ${candidate.full_name} (${candidate.driver_id})`);
       const accepted = await this.driversGateway.offerTrip(
         candidate.driver_id,
-        { tripId, pickup, dropoff, paymentMethod },
+        { tripId, pickup, dropoff, paymentMethod, fareGs },
         OFFER_TIMEOUT_MS,
       );
       if (accepted) {
@@ -174,7 +179,7 @@ export class TripsService {
   async getDriverActiveTrip(driverId: string) {
     const { rows } = await pool.query(
       `SELECT
-         t.id, t.status, t.payment_method,
+         t.id, t.status, t.payment_method, t.fare_gs,
          ST_Y(t.pickup_location::geometry) AS pickup_lat,
          ST_X(t.pickup_location::geometry) AS pickup_lon,
          CASE WHEN t.dropoff_location IS NULL THEN NULL ELSE ST_Y(t.dropoff_location::geometry) END AS dropoff_lat,
@@ -191,6 +196,7 @@ export class TripsService {
       trip_id: t.id,
       status: t.status,
       payment_method: t.payment_method,
+      fare_gs: t.fare_gs == null ? null : Number(t.fare_gs),
       pickup: { lat: Number(t.pickup_lat), lon: Number(t.pickup_lon) },
       dropoff: t.dropoff_lat == null ? null : { lat: Number(t.dropoff_lat), lon: Number(t.dropoff_lon) },
     };

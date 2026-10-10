@@ -66,14 +66,14 @@ export class TripsController {
 
     const user = (req as Request & { user: AuthUser }).user;
 
-    const { tripId } = await this.tripsService.createTrip({
+    const { tripId, fareGs } = await this.tripsService.createTrip({
       passengerId: user.sub,
       pickup: body.pickup,
       dropoff: body.dropoff ?? null,
       paymentMethod: body.paymentMethod ?? 'efectivo',
     });
 
-    return { trip_id: tripId, status: 'requested' };
+    return { trip_id: tripId, status: 'requested', fare_gs: fareGs };
   }
 
   // GET /trips/mine  (requiere token de pasajero)

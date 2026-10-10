@@ -140,7 +140,7 @@ export class AdminService implements OnModuleInit, OnModuleDestroy {
     const { rows } = await pool.query(
       `SELECT
          t.id, t.status, t.payment_method, t.requested_at, t.matched_at, t.started_at,
-         t.completed_at, t.cancelled_at, t.commission_amount, t.commission_paid_at,
+         t.completed_at, t.cancelled_at, t.commission_amount, t.commission_paid_at, t.fare_gs,
          ST_Y(t.pickup_location::geometry) AS pickup_lat,
          ST_X(t.pickup_location::geometry) AS pickup_lon,
          CASE WHEN t.dropoff_location IS NULL THEN NULL ELSE ST_Y(t.dropoff_location::geometry) END AS dropoff_lat,
