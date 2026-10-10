@@ -139,7 +139,8 @@ export class TripsService {
     this.driversGateway.setActiveTrip(driverId, tripId);
 
     const { rows } = await pool.query(
-      `SELECT u.full_name, u.phone, u.rating, v.vehicle_type, v.plate, v.brand, v.model, v.color
+      `SELECT u.full_name, u.phone, u.rating, v.vehicle_type, v.plate, v.brand, v.model, v.color,
+              dp.transfer_alias, dp.pix_key
        FROM users u
        LEFT JOIN driver_profiles dp ON dp.user_id = u.id
        LEFT JOIN vehicles v ON v.id = dp.active_vehicle_id
@@ -196,6 +197,57 @@ export class TripsService {
   async isBlocked(userId: string): Promise<boolean> {
     const { rows } = await pool.query(`SELECT COALESCE(blocked, FALSE) AS blocked FROM users WHERE id = $1`, [userId]);
     return rows[0]?.blocked === true;
+  }
+
+  // Viaje activo de un PASAJERO (pedido, con conductor o en curso), o
+  // null. La app lo pide al abrirse para recuperar el viaje si se cerró.
+  async getPassengerActiveTrip(passengerId: string) {
+    const { rows } = await pool.query(
+      `SELECT
+         t.id, t.status, t.payment_method, t.fare_gs, t.driver_id,
+         ST_Y(t.pickup_location::geometry) AS pickup_lat,
+         ST_X(t.pickup_location::geometry) AS pickup_lon,
+         CASE WHEN t.dropoff_location IS NULL THEN NULL ELSE ST_Y(t.dropoff_location::geometry) END AS dropoff_lat,
+         CASE WHEN t.dropoff_location IS NULL THEN NULL ELSE ST_X(t.dropoff_location::geometry) END AS dropoff_lon,
+         d.full_name, d.phone, d.rating, v.vehicle_type, v.plate, v.brand, v.model, v.color,
+         dp.transfer_alias, dp.pix_key,
+         ST_Y(dp.last_location::geometry) AS driver_lat,
+         ST_X(dp.last_location::geometry) AS driver_lon
+       FROM trips t
+       LEFT JOIN users d ON d.id = t.driver_id
+       LEFT JOIN driver_profiles dp ON dp.user_id = t.driver_id
+       LEFT JOIN vehicles v ON v.id = dp.active_vehicle_id
+       WHERE t.passenger_id = $1 AND t.status IN ('requested', 'matched', 'accepted', 'arrived', 'in_progress')
+       ORDER BY t.requested_at DESC
+       LIMIT 1`,
+      [passengerId],
+    );
+    const t = rows[0];
+    if (!t) return null;
+    return {
+      trip_id: t.id,
+      status: t.status,
+      payment_method: t.payment_method,
+      fare_gs: t.fare_gs == null ? null : Number(t.fare_gs),
+      pickup: { lat: Number(t.pickup_lat), lon: Number(t.pickup_lon) },
+      dropoff: t.dropoff_lat == null ? null : { lat: Number(t.dropoff_lat), lon: Number(t.dropoff_lon) },
+      driver: t.driver_id
+        ? {
+            driver_id: t.driver_id,
+            full_name: t.full_name,
+            phone: t.phone,
+            rating: t.rating,
+            vehicle_type: t.vehicle_type,
+            plate: t.plate,
+            brand: t.brand,
+            model: t.model,
+            color: t.color,
+            transfer_alias: t.transfer_alias,
+            pix_key: t.pix_key,
+          }
+        : null,
+      driver_location: t.driver_lat == null ? null : { lat: Number(t.driver_lat), lon: Number(t.driver_lon) },
+    };
   }
 
   // Viaje activo (aceptado o en curso) de un conductor, o null.

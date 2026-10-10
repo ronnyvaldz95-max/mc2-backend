@@ -90,6 +90,15 @@ export class TripsController {
     return { trips };
   }
 
+  // GET /trips/passenger/active  (requiere token de pasajero)
+  // El viaje en curso del pasajero (para recuperarlo si cerró la app).
+  @Get('passenger/active')
+  @UseGuards(JwtAuthGuard)
+  async passengerActive(@Req() req: Request) {
+    const user = (req as Request & { user: AuthUser }).user;
+    return { trip: await this.tripsService.getPassengerActiveTrip(user.sub) };
+  }
+
   // GET /trips/driver/active  (requiere token de conductor)
   // El viaje que el conductor tiene aceptado o en curso, o null. La app
   // lo pide al abrirse para recuperar el viaje si se cerró a la mitad.

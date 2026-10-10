@@ -1,4 +1,4 @@
-import { BadRequestException, Controller, ForbiddenException, Get, Query, Req, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, ForbiddenException, Get, Patch, Query, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
 import { AuthUser, JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { DriversService } from './drivers.service';
@@ -20,6 +20,15 @@ export class DriversController {
     const user = (req as Request & { user: AuthUser }).user;
     if (user.role !== 'driver') throw new ForbiddenException('Solo para conductores');
     return this.driversService.getDriverStats(user.sub);
+  }
+
+  // PATCH /drivers/me/payout  { transferAlias?, pixKey? }
+  @Patch('me/payout')
+  @UseGuards(JwtAuthGuard)
+  async setPayout(@Req() req: Request, @Body() body: { transferAlias?: string; pixKey?: string }) {
+    const user = (req as Request & { user: AuthUser }).user;
+    if (user.role !== 'driver') throw new ForbiddenException('Solo para conductores');
+    return this.driversService.setPayout(user.sub, body?.transferAlias ?? null, body?.pixKey ?? null);
   }
 
   @Get('nearby')

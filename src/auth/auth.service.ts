@@ -33,6 +33,8 @@ export interface RegisterDriverInput {
   password: string;
   documentNumber: string;
   licenseNumber: string;
+  transferAlias?: string;
+  pixKey?: string;
   vehicle: {
     plate: string;
     brand?: string;
@@ -133,9 +135,15 @@ export class AuthService {
       const vehicleId = vehicleRows[0].id;
 
       await client.query(
-        `INSERT INTO driver_profiles (user_id, license_number, verified, status, active_vehicle_id)
-         VALUES ($1, $2, FALSE, 'offline', $3)`,
-        [user.id, input.licenseNumber, vehicleId],
+        `INSERT INTO driver_profiles (user_id, license_number, verified, status, active_vehicle_id, transfer_alias, pix_key)
+         VALUES ($1, $2, FALSE, 'offline', $3, $4, $5)`,
+        [
+          user.id,
+          input.licenseNumber,
+          vehicleId,
+          input.transferAlias?.trim() ? input.transferAlias.trim().slice(0, 120) : null,
+          input.pixKey?.trim() ? input.pixKey.trim().slice(0, 120) : null,
+        ],
       );
 
       await client.query('COMMIT');

@@ -15,7 +15,7 @@ const POSTGRES_SYNC_INTERVAL_MS = 30_000;
 // Si un conductor debe esta comisión o más (en guaraníes), no puede
 // ponerse online ni recibir viajes hasta que lo marques pagado en el
 // panel. Se cambia con la variable de entorno COMMISSION_DEBT_LIMIT.
-export const COMMISSION_DEBT_LIMIT = Number(process.env.COMMISSION_DEBT_LIMIT) || 30_000;
+export const COMMISSION_DEBT_LIMIT = Number(process.env.COMMISSION_DEBT_LIMIT) || 150_000;
 
 export interface NearbyDriver {
   driver_id: string;
@@ -94,6 +94,10 @@ export class DriversService implements OnModuleInit {
       ),
     ]);
 
+    const { rows: payout } = await pool.query(
+      `SELECT transfer_alias, pix_key FROM driver_profiles WHERE user_id = $1`,
+      [driverId],
+    );
     const p = profile.rows[0] ?? {};
     return {
       full_name: p.full_name ?? null,
@@ -107,7 +111,20 @@ export class DriversService implements OnModuleInit {
       debt_limit: COMMISSION_DEBT_LIMIT,
       blocked_by_debt: debt >= COMMISSION_DEBT_LIMIT,
       recent_ratings: comments.rows,
+      transfer_alias: payout[0]?.transfer_alias ?? null,
+      pix_key: payout[0]?.pix_key ?? null,
     };
+  }
+
+  /** El conductor carga/cambia su alias de transferencia y llave Pix. */
+  async setPayout(driverId: string, transferAlias: string | null, pixKey: string | null) {
+    const clean = (v: string | null) => (v && v.trim() ? v.trim().slice(0, 120) : null);
+    const { rows } = await pool.query(
+      `UPDATE driver_profiles SET transfer_alias = $2, pix_key = $3, updated_at = now()
+       WHERE user_id = $1 RETURNING transfer_alias, pix_key`,
+      [driverId, clean(transferAlias), clean(pixKey)],
+    );
+    return rows[0] ?? null;
   }
 
   /** Comisión que el conductor todavía no pagó (Gs.). */
