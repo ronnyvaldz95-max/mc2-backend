@@ -228,6 +228,22 @@ export class TripsService {
     };
   }
 
+  // El conductor avisa que llegó al punto de recogida: al pasajero le
+  // suena "Tu conductor llegó". Solo válido desde 'accepted'.
+  async arrivedTrip(tripId: string, driverId: string): Promise<void> {
+    const { rows } = await pool.query(`SELECT status, driver_id FROM trips WHERE id = $1`, [tripId]);
+    const trip = rows[0];
+    if (!trip) throw new NotFoundException('Viaje no encontrado');
+    if (trip.driver_id !== driverId) throw new ForbiddenException('Este viaje no te fue asignado');
+    if (trip.status === 'arrived') return;
+    if (trip.status !== 'accepted') {
+      throw new BadRequestException(`No se puede marcar llegada en un viaje en estado '${trip.status}'`);
+    }
+    await pool.query(`UPDATE trips SET status = 'arrived' WHERE id = $1`, [tripId]);
+    this.tripsGateway.notifyTrip(tripId, 'trip:arrived', { trip_id: tripId });
+    this.logger.log(`Viaje ${tripId}: el conductor llegó a la recogida`);
+  }
+
   // El conductor asignado marca que arrancó el viaje (recogió al
   // pasajero). Solo válido desde 'accepted'.
   async startTrip(tripId: string, driverId: string): Promise<void> {
@@ -235,7 +251,7 @@ export class TripsService {
     const trip = rows[0];
     if (!trip) throw new NotFoundException('Viaje no encontrado');
     if (trip.driver_id !== driverId) throw new ForbiddenException('Este viaje no te fue asignado');
-    if (trip.status !== 'accepted') {
+    if (trip.status !== 'accepted' && trip.status !== 'arrived') {
       throw new BadRequestException(`No se puede iniciar un viaje en estado '${trip.status}'`);
     }
     await pool.query(`UPDATE trips SET status = 'in_progress', started_at = now() WHERE id = $1`, [tripId]);
@@ -271,7 +287,7 @@ export class TripsService {
     const isDriver = requesterRole === 'driver' && trip.driver_id === requesterId;
     if (!isPassenger && !isDriver) throw new ForbiddenException('No podés cancelar este viaje');
 
-    if (!['requested', 'matched', 'accepted', 'no_drivers_available'].includes(trip.status)) {
+    if (!['requested', 'matched', 'accepted', 'arrived', 'no_drivers_available'].includes(trip.status)) {
       throw new BadRequestException(`No se puede cancelar un viaje en estado '${trip.status}'`);
     }
 

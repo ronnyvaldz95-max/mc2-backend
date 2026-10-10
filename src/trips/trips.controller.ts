@@ -100,6 +100,16 @@ export class TripsController {
     return { trip: await this.tripsService.getDriverActiveTrip(user.sub) };
   }
 
+  // POST /trips/:id/arrived  (requiere token del CONDUCTOR asignado)
+  // El conductor llegó al punto de recogida; se le avisa al pasajero.
+  @Post(':id/arrived')
+  @UseGuards(JwtAuthGuard)
+  async arrived(@Param('id') id: string, @Req() req: Request) {
+    const user = (req as Request & { user: AuthUser }).user;
+    await this.tripsService.arrivedTrip(id, user.sub);
+    return { ok: true };
+  }
+
   // POST /trips/:id/start  (requiere token del CONDUCTOR asignado)
   // El conductor marca que arrancó el viaje (recogió al pasajero).
   @Post(':id/start')
