@@ -82,11 +82,14 @@ export class AuthService {
       !input?.phone ||
       !input?.password ||
       !input?.licenseNumber ||
-      !input?.vehicle?.plate ||
-      !input?.vehicle?.vehicleType
+      !input?.vehicle?.plate?.trim() ||
+      !input?.vehicle?.vehicleType ||
+      !input?.vehicle?.brand?.trim() ||
+      !input?.vehicle?.model?.trim() ||
+      !input?.vehicle?.color?.trim()
     ) {
       throw new BadRequestException(
-        'fullName, phone, password, licenseNumber y vehicle {plate, vehicleType} son requeridos',
+        'Completá todos los datos: nombre, teléfono, contraseña, licencia, y del vehículo patente, tipo, marca, modelo y color',
       );
     }
     if (input.password.length < 6) {

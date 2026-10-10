@@ -121,7 +121,7 @@ export class TripsService {
     this.driversGateway.setActiveTrip(driverId, tripId);
 
     const { rows } = await pool.query(
-      `SELECT u.full_name, u.rating, v.vehicle_type, v.plate
+      `SELECT u.full_name, u.rating, v.vehicle_type, v.plate, v.brand, v.model, v.color
        FROM users u
        LEFT JOIN driver_profiles dp ON dp.user_id = u.id
        LEFT JOIN vehicles v ON v.id = dp.active_vehicle_id
