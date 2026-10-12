@@ -136,10 +136,13 @@ export class TripsController {
   // El conductor marca que terminó el viaje (dejó al pasajero).
   @Post(':id/complete')
   @UseGuards(JwtAuthGuard)
-  async complete(@Param('id') id: string, @Req() req: Request) {
+  async complete(@Param('id') id: string, @Req() req: Request, @Body() body: { lat?: number; lon?: number } = {}) {
     const user = (req as Request & { user: AuthUser }).user;
-    await this.tripsService.completeTrip(id, user.sub);
-    return { ok: true };
+    // La app manda (opcional) dónde terminó, para cerrar el precio de
+    // un viaje sin destino.
+    const end = body && isValidLatLon(body) ? { lat: body.lat as number, lon: body.lon as number } : null;
+    const result = await this.tripsService.completeTrip(id, user.sub, end);
+    return { ok: true, ...result };
   }
 
   // POST /trips/:id/cancel  (requiere token del PASAJERO dueño o del

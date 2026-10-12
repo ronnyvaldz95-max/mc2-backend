@@ -16,7 +16,7 @@ import { pool } from '../db';
 import { DriversService } from '../drivers/drivers.service';
 import { DriversGateway } from '../drivers/drivers.gateway';
 import { TripsGateway } from './trips.gateway';
-import { commissionFor, estimateFareGs, VehicleCategory } from '../fare';
+import { commissionFor, distanceKm, estimateFareGs, fareForKm, getPricing, VehicleCategory } from '../fare';
 
 const OFFER_TIMEOUT_MS = 30_000;
 
@@ -320,24 +320,57 @@ export class TripsService {
       throw new BadRequestException(`No se puede iniciar un viaje en estado '${trip.status}'`);
     }
     await pool.query(`UPDATE trips SET status = 'in_progress', started_at = now() WHERE id = $1`, [tripId]);
+    this.driversGateway.resetOdometer(tripId);
     this.tripsGateway.notifyTrip(tripId, 'trip:started', { trip_id: tripId });
     this.logger.log(`Viaje ${tripId}: iniciado por conductor ${driverId}`);
   }
 
   // El conductor asignado marca que terminó el viaje (dejó al
   // pasajero). Solo válido desde 'in_progress'.
-  async completeTrip(tripId: string, driverId: string): Promise<void> {
-    const { rows } = await pool.query(`SELECT status, driver_id FROM trips WHERE id = $1`, [tripId]);
+  async completeTrip(
+    tripId: string,
+    driverId: string,
+    endPos: LatLon | null = null,
+  ): Promise<{ fare_gs: number | null; commission_gs: number; distance_km: number | null }> {
+    const { rows } = await pool.query(
+      `SELECT status, driver_id, fare_gs, commission_amount, vehicle_category,
+              ST_Y(pickup_location::geometry) AS pickup_lat, ST_X(pickup_location::geometry) AS pickup_lon
+       FROM trips WHERE id = $1`,
+      [tripId],
+    );
     const trip = rows[0];
     if (!trip) throw new NotFoundException('Viaje no encontrado');
     if (trip.driver_id !== driverId) throw new ForbiddenException('Este viaje no te fue asignado');
     if (trip.status !== 'in_progress') {
       throw new BadRequestException(`No se puede finalizar un viaje en estado '${trip.status}'`);
     }
-    await pool.query(`UPDATE trips SET status = 'completed', completed_at = now() WHERE id = $1`, [tripId]);
+
+    let fareGs: number | null = trip.fare_gs == null ? null : Number(trip.fare_gs);
+    let commission = Number(trip.commission_amount ?? 0);
+    let distance: number | null = null;
+    const odo = this.driversGateway.takeOdometer(tripId);
+
+    // Viaje SIN destino: el precio se calcula ahora con lo recorrido.
+    // Usamos lo mayor entre el odómetro (recorrido real) y la línea
+    // recta desde la recogida hasta donde terminó (respaldo).
+    if (fareGs == null) {
+      const end = endPos ?? odo?.last ?? null;
+      const pickup = { lat: Number(trip.pickup_lat), lon: Number(trip.pickup_lon) };
+      const straight = end ? distanceKm(pickup, end) * getPricing().route_factor : 0;
+      distance = Math.round(Math.max(straight, odo?.km ?? 0) * 10) / 10;
+      fareGs = fareForKm(distance, (trip.vehicle_category ?? 'auto') as VehicleCategory);
+      commission = commissionFor(fareGs);
+      this.logger.log(`Viaje ${tripId}: sin destino, ${distance} km -> Gs. ${fareGs} (comisión ${commission})`);
+    }
+
+    await pool.query(
+      `UPDATE trips SET status = 'completed', completed_at = now(), fare_gs = $2, commission_amount = $3 WHERE id = $1`,
+      [tripId, fareGs, commission],
+    );
     this.driversGateway.setActiveTrip(driverId, null);
-    this.tripsGateway.notifyTrip(tripId, 'trip:completed', { trip_id: tripId });
+    this.tripsGateway.notifyTrip(tripId, 'trip:completed', { trip_id: tripId, fare_gs: fareGs, distance_km: distance });
     this.logger.log(`Viaje ${tripId}: completado por conductor ${driverId}`);
+    return { fare_gs: fareGs, commission_gs: commission, distance_km: distance };
   }
 
   // El pasajero dueño, o el conductor asignado, cancelan el viaje.

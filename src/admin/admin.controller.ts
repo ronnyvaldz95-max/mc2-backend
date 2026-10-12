@@ -15,6 +15,7 @@ import { APPROVAL_STATUSES, AdminService, ApprovalStatus } from './admin.service
 // PATCH /admin/users/:id/blocked             -> { blocked: true|false }
 // GET   /admin/commissions                   -> deuda de comisión por conductor
 // POST  /admin/commissions/:driverId/paid    -> marca todo lo adeudado como pagado
+// GET   /admin/reports?from=YYYY-MM-DD&to=YYYY-MM-DD -> reporte del período
 @Controller('admin')
 @UseGuards(AdminGuard)
 export class AdminController {
@@ -63,6 +64,15 @@ export class AdminController {
   async setBlocked(@Param('id') id: string, @Body() body: { blocked?: boolean }) {
     if (typeof body?.blocked !== 'boolean') throw new BadRequestException('blocked tiene que ser true o false');
     return { user: await this.adminService.setUserBlocked(id, body.blocked) };
+  }
+
+  @Get('reports')
+  async reports(@Query('from') from?: string, @Query('to') to?: string) {
+    const re = /^\d{4}-\d{2}-\d{2}$/;
+    if (!from || !to || !re.test(from) || !re.test(to)) {
+      throw new BadRequestException('from y to tienen que ser fechas YYYY-MM-DD');
+    }
+    return this.adminService.getReport(from, to);
   }
 
   @Get('commissions')

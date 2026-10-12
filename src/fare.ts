@@ -24,7 +24,7 @@ const num = (name: string, def: number) => {
 
 export function getPricing() {
   return {
-    base_gs: num('FARE_BASE_GS', 21_000),
+    base_gs: num('FARE_BASE_GS', 18_000),
     included_km: num('FARE_INCLUDED_KM', 3),
     included_min: num('FARE_INCLUDED_MIN', 8),
     per_km_gs: num('FARE_PER_KM_GS', 2_000),
@@ -56,7 +56,14 @@ export function estimateFareGs(
 ): number | null {
   if (!dropoff) return null;
   const p = getPricing();
-  const km = distanceKm(pickup, dropoff) * p.route_factor;
+  return fareForKm(distanceKm(pickup, dropoff) * p.route_factor, category);
+}
+
+// Precio para una distancia ya conocida (km por calle). Lo usa el
+// estimado con destino y también el cierre de un viaje SIN destino,
+// donde los km salen del recorrido real del conductor.
+export function fareForKm(km: number, category: VehicleCategory = 'auto'): number {
+  const p = getPricing();
   const minutes = (km / p.avg_speed_kmh) * 60;
   const carRaw =
     p.base_gs +
@@ -78,4 +85,4 @@ export function commissionFor(fareGs: number | null): number {
 
 // Lo que sigue estaba antes como constante; se mantiene el nombre por
 // compatibilidad con imports existentes.
-export const BASE_FARE_GS = 21_000;
+export const BASE_FARE_GS = 18_000;

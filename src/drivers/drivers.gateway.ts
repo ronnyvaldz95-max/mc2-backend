@@ -23,6 +23,7 @@ import {
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { pool } from '../db';
+import { distanceKm } from '../fare';
 import { AuthUser } from '../auth/jwt-auth.guard';
 import { COMMISSION_DEBT_LIMIT, DriversService } from './drivers.service';
 
@@ -77,6 +78,13 @@ export class DriversGateway implements OnGatewayConnection, OnGatewayDisconnect 
   // termina o se cancela -- así sabemos a qué sala mandar cada
   // driver:ping sin consultar la base de datos en cada ping.
   private readonly driverActiveTrip = new Map<string, string>();
+
+  // Odómetro en memoria por viaje: suma los km reales que va haciendo
+  // el conductor (con cada driver:ping). Se reinicia al "Iniciar viaje"
+  // y se usa al finalizar un viaje SIN destino para calcular el precio.
+  // Si el servidor se reinicia a mitad de viaje se pierde y se usa la
+  // distancia en línea recta como respaldo.
+  private readonly tripOdometer = new Map<string, { lat: number; lon: number; km: number; t: number }>();
 
   // tripId -> oferta pendiente de respuesta de ese conductor puntual.
   private readonly pendingTripOffers = new Map<string, { driverId: string; resolve: (accepted: boolean) => void }>();
@@ -186,7 +194,35 @@ export class DriversGateway implements OnGatewayConnection, OnGatewayDisconnect 
     const tripId = this.driverActiveTrip.get(driverId);
     if (tripId) {
       this.server.to(`trip:${tripId}`).emit('trip:driver_location', { lat: payload.lat, lon: payload.lon });
+      this.addToOdometer(tripId, payload.lat, payload.lon);
     }
+  }
+
+  private addToOdometer(tripId: string, lat: number, lon: number): void {
+    const now = Date.now();
+    const o = this.tripOdometer.get(tripId);
+    if (!o) {
+      this.tripOdometer.set(tripId, { lat, lon, km: 0, t: now });
+      return;
+    }
+    const seg = distanceKm(o, { lat, lon });
+    // Ignoramos el "temblor" del GPS parado (<25 m) sin mover el punto
+    // de referencia, y saltos imposibles (>150 km/h) por GPS errático.
+    if (seg < 0.025) return;
+    const hours = Math.max((now - o.t) / 3_600_000, 1 / 3600);
+    if (seg / hours > 150) return;
+    this.tripOdometer.set(tripId, { lat, lon, km: o.km + seg, t: now });
+  }
+
+  resetOdometer(tripId: string): void {
+    this.tripOdometer.delete(tripId);
+  }
+
+  // Devuelve km recorridos y se olvida del viaje.
+  takeOdometer(tripId: string): { km: number; last: { lat: number; lon: number } } | null {
+    const o = this.tripOdometer.get(tripId);
+    this.tripOdometer.delete(tripId);
+    return o ? { km: o.km, last: { lat: o.lat, lon: o.lon } } : null;
   }
 
   // TripsService llama esto cuando un viaje pasa a estar activo para

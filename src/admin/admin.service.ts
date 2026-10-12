@@ -88,8 +88,8 @@ export class AdminService implements OnModuleInit, OnModuleDestroy {
   async listDrivers(status?: ApprovalStatus) {
     const { rows } = await pool.query(
       `SELECT
-         u.id, u.full_name, u.phone, u.rating, u.is_active, u.created_at,
-         dp.license_number, dp.approval_status, dp.approval_notes, dp.approved_at,
+         u.id, u.full_name, u.phone, u.rating, u.is_active, u.created_at, u.document_number,
+         dp.license_number, dp.transfer_alias, dp.pix_key, dp.approval_status, dp.approval_notes, dp.approved_at,
          dp.status AS online_status, dp.last_location_at,
          v.plate, v.brand, v.model, v.color, v.vehicle_type,
          (SELECT COUNT(*) FROM trips t WHERE t.driver_id = u.id AND t.status = 'completed')::int AS completed_trips
@@ -101,6 +101,79 @@ export class AdminService implements OnModuleInit, OnModuleDestroy {
       [status ?? null],
     );
     return rows;
+  }
+
+  // Reporte de un período (fechas YYYY-MM-DD en hora de Paraguay,
+  // "to" inclusive): totales, día por día, ranking de conductores y el
+  // detalle de viajes completados (para exportar a Excel desde el panel).
+  async getReport(from: string, to: string) {
+    const range = `completed_at >= ($1::date)::timestamp AT TIME ZONE 'America/Asuncion'
+                   AND completed_at < ($2::date + 1)::timestamp AT TIME ZONE 'America/Asuncion'`;
+    const [summary, days, drivers, trips] = await Promise.all([
+      pool.query(
+        `SELECT COUNT(*)::int AS trips,
+                COALESCE(SUM(fare_gs), 0)::bigint AS gross,
+                COALESCE(SUM(commission_amount), 0)::bigint AS commission,
+                COALESCE(SUM(commission_amount) FILTER (WHERE commission_paid_at IS NOT NULL), 0)::bigint AS collected,
+                COALESCE(SUM(commission_amount) FILTER (WHERE commission_paid_at IS NULL), 0)::bigint AS pending,
+                COUNT(*) FILTER (WHERE vehicle_category = 'moto')::int AS moto_trips,
+                COUNT(DISTINCT driver_id)::int AS active_drivers,
+                COUNT(DISTINCT passenger_id)::int AS passengers
+         FROM trips WHERE status = 'completed' AND ${range}`,
+        [from, to],
+      ),
+      pool.query(
+        `SELECT to_char(completed_at AT TIME ZONE 'America/Asuncion', 'YYYY-MM-DD') AS day,
+                COUNT(*)::int AS trips,
+                COALESCE(SUM(fare_gs), 0)::bigint AS gross,
+                COALESCE(SUM(commission_amount), 0)::bigint AS commission
+         FROM trips WHERE status = 'completed' AND ${range}
+         GROUP BY 1 ORDER BY 1`,
+        [from, to],
+      ),
+      pool.query(
+        `SELECT u.id, u.full_name, u.phone,
+                COUNT(*)::int AS trips,
+                COALESCE(SUM(t.fare_gs), 0)::bigint AS gross,
+                COALESCE(SUM(t.commission_amount), 0)::bigint AS commission,
+                COALESCE(SUM(t.commission_amount) FILTER (WHERE t.commission_paid_at IS NULL), 0)::bigint AS pending
+         FROM trips t JOIN users u ON u.id = t.driver_id
+         WHERE t.status = 'completed' AND ${range.replace(/completed_at/g, 't.completed_at')}
+         GROUP BY u.id, u.full_name, u.phone
+         ORDER BY gross DESC, trips DESC`,
+        [from, to],
+      ),
+      pool.query(
+        `SELECT t.id,
+                to_char(t.completed_at AT TIME ZONE 'America/Asuncion', 'YYYY-MM-DD HH24:MI') AS completed_at,
+                d.full_name AS driver_name, d.phone AS driver_phone,
+                p.full_name AS passenger_name, p.phone AS passenger_phone,
+                t.vehicle_category, t.payment_method, t.fare_gs, t.commission_amount,
+                (t.dropoff_location IS NOT NULL) AS had_destination,
+                (t.commission_paid_at IS NOT NULL) AS commission_paid
+         FROM trips t
+         LEFT JOIN users d ON d.id = t.driver_id
+         LEFT JOIN users p ON p.id = t.passenger_id
+         WHERE t.status = 'completed' AND ${range.replace(/completed_at/g, 't.completed_at')}
+         ORDER BY t.completed_at DESC
+         LIMIT 10000`,
+        [from, to],
+      ),
+    ]);
+    const n = (o: Record<string, unknown>) =>
+      Object.fromEntries(Object.entries(o).map(([k, v]) => [k, typeof v === 'string' && /^-?\d+$/.test(v) && k !== 'phone' && !k.endsWith('_phone') && k !== 'id' ? Number(v) : v]));
+    return {
+      from,
+      to,
+      summary: n(summary.rows[0]),
+      days: days.rows.map(n),
+      drivers: drivers.rows.map(n),
+      trips: trips.rows.map((r) => ({
+        ...r,
+        fare_gs: r.fare_gs == null ? null : Number(r.fare_gs),
+        commission_amount: Number(r.commission_amount ?? 0),
+      })),
+    };
   }
 
   async setDriverStatus(driverId: string, status: ApprovalStatus, notes: string | null) {
